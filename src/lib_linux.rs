@@ -3,11 +3,56 @@ extern crate nix;
 
 use self::libc::{pthread_kill, SIGPROF};
 use self::nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet};
+use std::cell::UnsafeCell;
+use std::mem;
 use std::os::unix::thread::JoinHandleExt;
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::thread::spawn;
 use std::thread::Thread;
+
+/// wraps a POSIX semaphore
+///
+/// We need to use these as only sem_post is required to be signal safe.
+struct PosixSemaphore {
+    sem: UnsafeCell<libc::sem_t>,
+}
+
+impl PosixSemaphore {
+    /// Returns a new semaphore if initialization succeeded.
+    ///
+    /// TODO: Consider exposing error code.
+    pub fn new(value: u32) -> Option<PosixSemaphore> {
+        let mut sem: libc::sem_t = unsafe { mem::uninitialized() };
+        let r = unsafe {
+            libc::sem_init(&mut sem, 0 /* not shared */, value)
+        };
+        if r == -1 {
+            return None;
+        }
+        Some(PosixSemaphore {
+            sem: UnsafeCell::new(sem),
+        })
+    }
+
+    pub fn post(&self) -> Option<()> {
+        unsafe { libc::sem_post(self.sem.get()) };
+        Some(())
+    }
+
+    pub fn wait(&self) -> Option<()> {
+        unsafe { libc::sem_wait(self.sem.get()) };
+        Some(())
+    }
+}
+
+unsafe impl Sync for PosixSemaphore {}
+
+impl Drop for PosixSemaphore {
+    fn drop(&mut self) {
+        unsafe { libc::sem_destroy(self.sem.get()) };
+    }
+}
 
 struct SharedState {
     barrier1: Barrier,
@@ -68,5 +113,18 @@ mod tests {
         unsafe {
             assert!(signal_received);
         }
+    }
+
+    #[test]
+    fn test_semaphore() {
+        let semaphore = Arc::new(PosixSemaphore::new(0).expect("init"));
+        let semaphoret = semaphore.clone();
+
+        let handle = spawn(move || {
+            semaphoret.post();
+        });
+
+        semaphore.wait();
+        handle.join().expect("successful join");
     }
 }
