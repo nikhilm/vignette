@@ -3,8 +3,6 @@ mod lib_linux;
 #[cfg(target_os = "linux")]
 use lib_linux::*;
 
-fn foo() {}
-
 #[cfg(test)]
 mod tests {
     #[test]

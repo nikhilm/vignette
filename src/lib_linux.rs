@@ -4,6 +4,10 @@ extern crate nix;
 use self::libc::{pthread_kill, SIGPROF};
 use self::nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet};
 use std::cell::UnsafeCell;
+use std::error;
+use std::fs;
+use std::io;
+use std::iter;
 use std::mem;
 use std::os::unix::thread::JoinHandleExt;
 use std::sync::Arc;
@@ -57,6 +61,18 @@ impl Drop for PosixSemaphore {
 struct SharedState {
     barrier1: Barrier,
     context: *mut libc::ucontext_t,
+}
+
+/// Iterates over task threads by reading /proc.
+pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<u32>>> {
+    fs::read_dir("/proc/self/task").map(|r| {
+        r.map(|entry| {
+            entry.map(|dir_entry| {
+                let file = dir_entry.file_name().into_string().expect("valid utf8");
+                file.parse::<u32>().expect("tid should be integer")
+            })
+        })
+    })
 }
 
 fn send_sigprof(to_kill: &JoinHandleExt) {
@@ -126,5 +142,15 @@ mod tests {
 
         semaphore.wait();
         handle.join().expect("successful join");
+    }
+
+    #[test]
+    fn test_thread_iterator() {
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as u32 };
+        let tasks: Vec<u32> = thread_iterator()
+            .expect("threads")
+            .map(|x| x.expect("tid listed"))
+            .collect();
+        assert!(tasks.contains(&tid));
     }
 }
