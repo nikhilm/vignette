@@ -41,14 +41,35 @@ impl PosixSemaphore {
         })
     }
 
-    pub fn post(&self) -> Option<()> {
-        unsafe { libc::sem_post(self.sem.get()) };
-        Some(())
+    pub fn post(&self) -> Result<(), io::Error> {
+        if unsafe { libc::sem_post(self.sem.get()) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 
-    pub fn wait(&self) -> i32 {
-        let r = unsafe { libc::sem_wait(self.sem.get()) };
-        r
+    pub fn wait(&self) -> Result<(), io::Error> {
+        if unsafe { libc::sem_wait(self.sem.get()) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    pub fn wait_through_intr(&self) -> Result<(), io::Error> {
+        loop {
+            match self.wait() {
+                Err(os_error) => {
+                    let err = os_error.raw_os_error().expect("os error");
+                    if err == libc::EINTR {
+                        continue;
+                    }
+                    return Err(os_error);
+                }
+                _ => return Ok(()),
+            }
+        }
     }
 }
 
@@ -119,18 +140,12 @@ where
     // signal the thread, wait for it to tell us state was copied.
     send_sigprof(tid);
     unsafe {
-        loop {
-            let r = shared_state.msg2.as_ref().unwrap().wait();
-            if r == -1 {
-                let err = io::Error::last_os_error().raw_os_error().expect("os error");
-                if err == libc::EINTR {
-                    continue;
-                }
-                assert!(false, "Unexpected error");
-            }
-            assert_eq!(r, 0);
-            break;
-        }
+        shared_state
+            .msg2
+            .as_ref()
+            .unwrap()
+            .wait_through_intr()
+            .expect("msg2 wait succeeded");
     }
 
     callback();
@@ -142,18 +157,12 @@ where
 
     // wait for thread to continue.
     unsafe {
-        loop {
-            let r = shared_state.msg4.as_ref().unwrap().wait();
-            if r == -1 {
-                let err = io::Error::last_os_error().raw_os_error().expect("os error");
-                if err == libc::EINTR {
-                    continue;
-                }
-                assert!(false, "Unexpected error");
-            }
-            assert_eq!(r, 0);
-            break;
-        }
+        shared_state
+            .msg4
+            .as_ref()
+            .unwrap()
+            .wait_through_intr()
+            .expect("msg4 wait succeeded");
     }
 
     clear_shared_state();
@@ -173,19 +182,14 @@ extern "C" fn sigprof_handler(
         shared_state.msg2.as_ref().unwrap().post();
 
         // Wait for sampling to finish.
-        loop {
-            let r = shared_state.msg3.as_ref().unwrap().wait();
-            if r == -1 {
-                let err = io::Error::last_os_error().raw_os_error().expect("os error");
-                if err == libc::EINTR {
-                    continue;
-                }
-                assert!(false, "Unexpected error");
-            }
-            assert_eq!(r, 0);
-            break;
-        }
+        shared_state
+            .msg3
+            .as_ref()
+            .unwrap()
+            .wait_through_intr()
+            .expect("msg3 wait succeeded");
 
+        // OK we are done!
         shared_state.msg4.as_ref().unwrap().post();
         // DO NOT TOUCH shared state here onwards.
     }
