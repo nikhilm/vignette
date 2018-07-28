@@ -11,6 +11,7 @@ use std::iter;
 use std::mem;
 use std::os::unix::thread::JoinHandleExt;
 use std::process;
+use std::ptr;
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::thread::spawn;
@@ -45,9 +46,9 @@ impl PosixSemaphore {
         Some(())
     }
 
-    pub fn wait(&self) -> Option<()> {
-        unsafe { libc::sem_wait(self.sem.get()) };
-        Some(())
+    pub fn wait(&self) -> i32 {
+        let r = unsafe { libc::sem_wait(self.sem.get()) };
+        r
     }
 }
 
@@ -57,11 +58,6 @@ impl Drop for PosixSemaphore {
     fn drop(&mut self) {
         unsafe { libc::sem_destroy(self.sem.get()) };
     }
-}
-
-struct SharedState {
-    barrier1: Barrier,
-    context: *mut libc::ucontext_t,
 }
 
 /// Iterates over task threads by reading /proc.
@@ -74,6 +70,125 @@ pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<libc::pid
             })
         })
     })
+}
+
+struct SharedState {
+    // "msg1" is the signal.
+    msg2: Option<PosixSemaphore>,
+    msg3: Option<PosixSemaphore>,
+    msg4: Option<PosixSemaphore>,
+    context: Option<libc::ucontext_t>,
+}
+
+// TODO: Think about how we can use some rust typisms to make this cleaner.
+static mut shared_state: SharedState = SharedState {
+    msg2: None,
+    msg3: None,
+    msg4: None,
+    context: None,
+};
+
+fn clear_shared_state() {
+    unsafe {
+        shared_state.msg2 = None;
+        shared_state.msg3 = None;
+        shared_state.msg4 = None;
+        shared_state.context = None;
+    }
+}
+
+fn reset_shared_state() {
+    unsafe {
+        shared_state.msg2 = PosixSemaphore::new(0);
+        shared_state.msg3 = PosixSemaphore::new(0);
+        shared_state.msg4 = PosixSemaphore::new(0);
+        shared_state.context = None;
+    }
+}
+
+pub fn suspend_and_resume_thread<F>(tid: libc::pid_t, callback: F) -> ()
+where
+    F: Fn() -> (),
+{
+    // TODO: In particular, this should ensure that we only call it after the SIGPROF handler has
+    // been registered correctly.
+
+    // first we reinitialize the semaphores
+    reset_shared_state();
+
+    // signal the thread, wait for it to tell us state was copied.
+    send_sigprof(tid);
+    unsafe {
+        loop {
+            let r = shared_state.msg2.as_ref().unwrap().wait();
+            if r == -1 {
+                let err = io::Error::last_os_error().raw_os_error().expect("os error");
+                if err == libc::EINTR {
+                    continue;
+                }
+                assert!(false, "Unexpected error");
+            }
+            assert_eq!(r, 0);
+            break;
+        }
+    }
+
+    callback();
+
+    // signal the thread to continue.
+    unsafe {
+        shared_state.msg3.as_ref().unwrap().post();
+    }
+
+    // wait for thread to continue.
+    unsafe {
+        loop {
+            let r = shared_state.msg4.as_ref().unwrap().wait();
+            if r == -1 {
+                let err = io::Error::last_os_error().raw_os_error().expect("os error");
+                if err == libc::EINTR {
+                    continue;
+                }
+                assert!(false, "Unexpected error");
+            }
+            assert_eq!(r, 0);
+            break;
+        }
+    }
+
+    clear_shared_state();
+}
+
+extern "C" fn sigprof_handler(
+    sig: libc::c_int,
+    info: *mut libc::siginfo_t,
+    ctx: *mut libc::c_void,
+) {
+    assert_eq!(sig, libc::SIGPROF);
+    unsafe {
+        // copy the context.
+        let context: libc::ucontext_t = *(ctx as *mut libc::ucontext_t);
+        shared_state.context = Some(context);
+        // Tell the sampler we copied the context.
+        shared_state.msg2.as_ref().unwrap().post();
+
+        // Wait for sampling to finish.
+        loop {
+            let r = shared_state.msg3.as_ref().unwrap().wait();
+            if r == -1 {
+                let err = io::Error::last_os_error().raw_os_error().expect("os error");
+                if err == libc::EINTR {
+                    continue;
+                }
+                assert!(false, "Unexpected error");
+            }
+            assert_eq!(r, 0);
+            break;
+        }
+
+        shared_state.msg4.as_ref().unwrap().post();
+        // DO NOT TOUCH shared state here onwards.
+    }
 }
 
 /// `to` is a Linux task ID.
@@ -158,5 +273,43 @@ mod tests {
             .map(|x| x.expect("tid listed"))
             .collect();
         assert!(tasks.contains(&tid));
+    }
+
+    #[test]
+    fn test_suspend_resume() {
+        let handler = SigHandler::SigAction(sigprof_handler);
+        let action = SigAction::new(
+            handler,
+            SaFlags::SA_RESTART | SaFlags::SA_SIGINFO,
+            SigSet::empty(),
+        );
+        unsafe {
+            sigaction(Signal::SIGPROF, &action).expect("signal handler set");
+        }
+
+        let (tx, rx) = channel();
+        // Just to get the thread to wait until the test is done.
+        let (tx2, rx2) = channel();
+        let handle = spawn(move || {
+            let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+            tx.send(tid).unwrap();
+            rx2.recv().unwrap();
+        });
+
+        let to = rx.recv().unwrap();
+        suspend_and_resume_thread(to, || unsafe {
+            let context = shared_state.context.expect("should have valid context");
+            // TODO: This is where we would want to use libunwind in a real program.
+            assert!(context.uc_stack.ss_size > 0);
+
+            // we can tell the thread to shutdown once it is resumed.
+            tx2.send(()).unwrap();
+        });
+
+        handle.join().unwrap();
+        // make sure we cleaned up.
+        unsafe {
+            assert!(shared_state.context.is_none());
+        }
     }
 }
