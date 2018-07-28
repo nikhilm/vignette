@@ -10,6 +10,7 @@ use std::io;
 use std::iter;
 use std::mem;
 use std::os::unix::thread::JoinHandleExt;
+use std::process;
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::thread::spawn;
@@ -64,20 +65,21 @@ struct SharedState {
 }
 
 /// Iterates over task threads by reading /proc.
-pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<u32>>> {
+pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<libc::pid_t>>> {
     fs::read_dir("/proc/self/task").map(|r| {
         r.map(|entry| {
             entry.map(|dir_entry| {
                 let file = dir_entry.file_name().into_string().expect("valid utf8");
-                file.parse::<u32>().expect("tid should be integer")
+                file.parse::<libc::pid_t>().expect("tid should be pid_t")
             })
         })
     })
 }
 
-fn send_sigprof(to_kill: &JoinHandleExt) {
+/// `to` is a Linux task ID.
+fn send_sigprof(to: libc::pid_t) {
     unsafe {
-        libc::pthread_kill(to_kill.as_pthread_t(), libc::SIGPROF);
+        libc::syscall(libc::SYS_tgkill, process::id(), to, libc::SIGPROF);
     }
 }
 
@@ -90,6 +92,7 @@ mod tests {
     use super::*;
 
     use self::nix::sys::signal::{sigaction, Signal};
+    use std::sync::mpsc::channel;
 
     static mut signal_received: bool = false;
 
@@ -116,15 +119,18 @@ mod tests {
             sigaction(Signal::SIGPROF, &action).expect("signal handler set");
         }
 
-        let barrier = Arc::new(Barrier::new(2));
-        let barriert = barrier.clone();
-
+        let (tx, rx) = channel();
+        // Just to get the thread to wait until the signal is sent.
+        let (tx2, rx2) = channel();
         let handle = spawn(move || {
-            barriert.wait();
+            let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+            tx.send(tid).unwrap();
+            rx2.recv().unwrap();
         });
 
-        send_sigprof(&handle);
-        barrier.wait();
+        let to = rx.recv().unwrap();
+        send_sigprof(to);
+        tx2.send(()).unwrap();
         handle.join().expect("successful join");
         unsafe {
             assert!(signal_received);
@@ -146,8 +152,8 @@ mod tests {
 
     #[test]
     fn test_thread_iterator() {
-        let tid = unsafe { libc::syscall(libc::SYS_gettid) as u32 };
-        let tasks: Vec<u32> = thread_iterator()
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+        let tasks: Vec<libc::pid_t> = thread_iterator()
             .expect("threads")
             .map(|x| x.expect("tid listed"))
             .collect();
