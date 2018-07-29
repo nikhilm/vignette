@@ -28,20 +28,20 @@ impl PosixSemaphore {
     /// Returns a new semaphore if initialization succeeded.
     ///
     /// TODO: Consider exposing error code.
-    pub fn new(value: u32) -> Option<PosixSemaphore> {
+    pub fn new(value: u32) -> io::Result<PosixSemaphore> {
         let mut sem: libc::sem_t = unsafe { mem::uninitialized() };
         let r = unsafe {
             libc::sem_init(&mut sem, 0 /* not shared */, value)
         };
         if r == -1 {
-            return None;
+            return Err(io::Error::last_os_error());
         }
-        Some(PosixSemaphore {
+        Ok(PosixSemaphore {
             sem: UnsafeCell::new(sem),
         })
     }
 
-    pub fn post(&self) -> Result<(), io::Error> {
+    pub fn post(&self) -> io::Result<()> {
         if unsafe { libc::sem_post(self.sem.get()) } == 0 {
             Ok(())
         } else {
@@ -49,7 +49,7 @@ impl PosixSemaphore {
         }
     }
 
-    pub fn wait(&self) -> Result<(), io::Error> {
+    pub fn wait(&self) -> io::Result<()> {
         if unsafe { libc::sem_wait(self.sem.get()) } == 0 {
             Ok(())
         } else {
@@ -57,7 +57,7 @@ impl PosixSemaphore {
         }
     }
 
-    pub fn wait_through_intr(&self) -> Result<(), io::Error> {
+    pub fn wait_through_intr(&self) -> io::Result<()> {
         loop {
             match self.wait() {
                 Err(os_error) => {
@@ -120,9 +120,9 @@ fn clear_shared_state() {
 
 fn reset_shared_state() {
     unsafe {
-        shared_state.msg2 = PosixSemaphore::new(0);
-        shared_state.msg3 = PosixSemaphore::new(0);
-        shared_state.msg4 = PosixSemaphore::new(0);
+        shared_state.msg2 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
+        shared_state.msg3 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
+        shared_state.msg4 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
         shared_state.context = None;
     }
 }
