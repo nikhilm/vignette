@@ -12,3 +12,6 @@ libc = "~0.2.42"
 # should be moved to unwinding once ready.
 unwind-sys = "0.1.1"
 rustc-demangle = "0.1.9"
+
+[[example]]
+name = "suspend_resume"

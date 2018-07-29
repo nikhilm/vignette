@@ -1,23 +1,17 @@
 extern crate libc;
 extern crate nix;
 
-use self::libc::{pthread_kill, SIGPROF};
 use self::nix::sys::signal::{sigaction, Signal};
 use self::nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet};
 use std::cell::UnsafeCell;
-use std::error;
 use std::fs;
 use std::io;
-use std::iter;
 use std::mem;
-use std::os::unix::thread::JoinHandleExt;
 use std::process;
-use std::ptr;
-use std::sync::Arc;
-use std::sync::Barrier;
-use std::thread::spawn;
-use std::thread::Thread;
 
+pub fn gettid() -> libc::pid_t {
+    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+}
 /// wraps a POSIX semaphore
 ///
 /// We need to use these as only sem_post is required to be signal safe.
@@ -83,6 +77,8 @@ impl Drop for PosixSemaphore {
 }
 
 /// Iterates over task threads by reading /proc.
+///
+/// IMPORTANT: This iterator also returns the sampling thread!
 pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<libc::pid_t>>> {
     fs::read_dir("/proc/self/task").map(|r| {
         r.map(|entry| {
@@ -103,7 +99,7 @@ struct SharedState {
 }
 
 // TODO: Think about how we can use some rust typisms to make this cleaner.
-static mut shared_state: SharedState = SharedState {
+static mut SHARED_STATE: SharedState = SharedState {
     msg2: None,
     msg3: None,
     msg4: None,
@@ -112,19 +108,19 @@ static mut shared_state: SharedState = SharedState {
 
 fn clear_shared_state() {
     unsafe {
-        shared_state.msg2 = None;
-        shared_state.msg3 = None;
-        shared_state.msg4 = None;
-        shared_state.context = None;
+        SHARED_STATE.msg2 = None;
+        SHARED_STATE.msg3 = None;
+        SHARED_STATE.msg4 = None;
+        SHARED_STATE.context = None;
     }
 }
 
 fn reset_shared_state() {
     unsafe {
-        shared_state.msg2 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
-        shared_state.msg3 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
-        shared_state.msg4 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
-        shared_state.context = None;
+        SHARED_STATE.msg2 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
+        SHARED_STATE.msg3 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
+        SHARED_STATE.msg4 = Some(PosixSemaphore::new(0).expect("valid semaphore"));
+        SHARED_STATE.context = None;
     }
 }
 
@@ -161,7 +157,7 @@ impl Sampler {
         // signal the thread, wait for it to tell us state was copied.
         send_sigprof(tid);
         unsafe {
-            shared_state
+            SHARED_STATE
                 .msg2
                 .as_ref()
                 .unwrap()
@@ -169,16 +165,16 @@ impl Sampler {
                 .expect("msg2 wait succeeded");
         }
 
-        unsafe { callback(&mut shared_state.context.expect("valid context")) };
+        unsafe { callback(&mut SHARED_STATE.context.expect("valid context")) };
 
         // signal the thread to continue.
         unsafe {
-            shared_state.msg3.as_ref().unwrap().post();
+            SHARED_STATE.msg3.as_ref().unwrap().post().expect("posted");
         }
 
         // wait for thread to continue.
         unsafe {
-            shared_state
+            SHARED_STATE
                 .msg4
                 .as_ref()
                 .unwrap()
@@ -200,19 +196,19 @@ impl Drop for Sampler {
 
 extern "C" fn sigprof_handler(
     sig: libc::c_int,
-    info: *mut libc::siginfo_t,
+    _info: *mut libc::siginfo_t,
     ctx: *mut libc::c_void,
 ) {
     assert_eq!(sig, libc::SIGPROF);
     unsafe {
         // copy the context.
         let context: libc::ucontext_t = *(ctx as *mut libc::ucontext_t);
-        shared_state.context = Some(context);
+        SHARED_STATE.context = Some(context);
         // Tell the sampler we copied the context.
-        shared_state.msg2.as_ref().unwrap().post();
+        SHARED_STATE.msg2.as_ref().unwrap().post().expect("posted");
 
         // Wait for sampling to finish.
-        shared_state
+        SHARED_STATE
             .msg3
             .as_ref()
             .unwrap()
@@ -220,7 +216,7 @@ extern "C" fn sigprof_handler(
             .expect("msg3 wait succeeded");
 
         // OK we are done!
-        shared_state.msg4.as_ref().unwrap().post();
+        SHARED_STATE.msg4.as_ref().unwrap().post().expect("posted");
         // DO NOT TOUCH shared state here onwards.
     }
 }
@@ -251,17 +247,19 @@ mod tests {
     use self::rustc_demangle::demangle;
     use self::unwind_sys::*;
     use std::sync::mpsc::channel;
+    use std::sync::Arc;
+    use std::thread::spawn;
 
-    static mut signal_received: bool = false;
+    static mut SIGNAL_RECEIVED: bool = false;
 
     extern "C" fn acknowledge_sigprof(
         sig: libc::c_int,
-        info: *mut libc::siginfo_t,
-        ctx: *mut libc::c_void,
+        _info: *mut libc::siginfo_t,
+        _ctx: *mut libc::c_void,
     ) {
         assert_eq!(sig, libc::SIGPROF);
         unsafe {
-            signal_received = true;
+            SIGNAL_RECEIVED = true;
         }
     }
 
@@ -291,7 +289,7 @@ mod tests {
         tx2.send(()).unwrap();
         handle.join().expect("successful join");
         unsafe {
-            assert!(signal_received);
+            assert!(SIGNAL_RECEIVED);
         }
     }
 
@@ -301,10 +299,10 @@ mod tests {
         let semaphoret = semaphore.clone();
 
         let handle = spawn(move || {
-            semaphoret.post();
+            semaphoret.post().expect("posted");
         });
 
-        semaphore.wait();
+        semaphore.wait().expect("received wait");
         handle.join().expect("successful join");
     }
 
@@ -331,7 +329,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        sampler.suspend_and_resume_thread(to, |context| unsafe {
+        sampler.suspend_and_resume_thread(to, |context| {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 
@@ -342,7 +340,7 @@ mod tests {
         handle.join().unwrap();
         // make sure we cleaned up.
         unsafe {
-            assert!(shared_state.context.is_none());
+            assert!(SHARED_STATE.context.is_none());
         }
     }
 
@@ -407,7 +405,7 @@ mod tests {
         handle.join().unwrap();
         // make sure we cleaned up.
         unsafe {
-            assert!(shared_state.context.is_none());
+            assert!(SHARED_STATE.context.is_none());
         }
     }
 }

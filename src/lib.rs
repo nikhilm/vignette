@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 mod lib_linux;
 #[cfg(target_os = "linux")]
-use lib_linux::*;
+pub use lib_linux::*;
 
 #[cfg(test)]
 mod tests {
@@ -24,7 +24,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        sampler.suspend_and_resume_thread(to, |context| unsafe {
+        sampler.suspend_and_resume_thread(to, |context| {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 
