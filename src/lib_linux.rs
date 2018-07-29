@@ -2,6 +2,7 @@ extern crate libc;
 extern crate nix;
 
 use self::libc::{pthread_kill, SIGPROF};
+use self::nix::sys::signal::{sigaction, Signal};
 use self::nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet};
 use std::cell::UnsafeCell;
 use std::error;
@@ -127,45 +128,74 @@ fn reset_shared_state() {
     }
 }
 
-pub fn suspend_and_resume_thread<F>(tid: libc::pid_t, callback: F) -> ()
-where
-    F: Fn() -> (),
-{
-    // TODO: In particular, this should ensure that we only call it after the SIGPROF handler has
-    // been registered correctly.
+/// Set's up the SIGPROF handler.
+///
+/// Dropping this reset's the handler.
+pub struct Sampler {
+    old_handler: SigAction,
+}
 
-    // first we reinitialize the semaphores
-    reset_shared_state();
+impl Sampler {
+    pub fn new() -> Sampler {
+        let handler = SigHandler::SigAction(sigprof_handler);
+        let action = SigAction::new(
+            handler,
+            SaFlags::SA_RESTART | SaFlags::SA_SIGINFO,
+            SigSet::empty(),
+        );
+        let old = unsafe { sigaction(Signal::SIGPROF, &action).expect("signal handler set") };
 
-    // signal the thread, wait for it to tell us state was copied.
-    send_sigprof(tid);
-    unsafe {
-        shared_state
-            .msg2
-            .as_ref()
-            .unwrap()
-            .wait_through_intr()
-            .expect("msg2 wait succeeded");
+        Sampler { old_handler: old }
     }
 
-    callback();
+    pub fn suspend_and_resume_thread<F>(&self, tid: libc::pid_t, callback: F) -> ()
+    where
+        F: Fn(&mut libc::ucontext_t) -> (),
+    {
+        // TODO: In particular, this should ensure that we only call it after the SIGPROF handler has
+        // been registered correctly.
 
-    // signal the thread to continue.
-    unsafe {
-        shared_state.msg3.as_ref().unwrap().post();
+        // first we reinitialize the semaphores
+        reset_shared_state();
+
+        // signal the thread, wait for it to tell us state was copied.
+        send_sigprof(tid);
+        unsafe {
+            shared_state
+                .msg2
+                .as_ref()
+                .unwrap()
+                .wait_through_intr()
+                .expect("msg2 wait succeeded");
+        }
+
+        unsafe { callback(&mut shared_state.context.expect("valid context")) };
+
+        // signal the thread to continue.
+        unsafe {
+            shared_state.msg3.as_ref().unwrap().post();
+        }
+
+        // wait for thread to continue.
+        unsafe {
+            shared_state
+                .msg4
+                .as_ref()
+                .unwrap()
+                .wait_through_intr()
+                .expect("msg4 wait succeeded");
+        }
+
+        clear_shared_state();
     }
+}
 
-    // wait for thread to continue.
-    unsafe {
-        shared_state
-            .msg4
-            .as_ref()
-            .unwrap()
-            .wait_through_intr()
-            .expect("msg4 wait succeeded");
+impl Drop for Sampler {
+    fn drop(&mut self) {
+        unsafe {
+            sigaction(Signal::SIGPROF, &self.old_handler).expect("previous signal handler restored")
+        };
     }
-
-    clear_shared_state();
 }
 
 extern "C" fn sigprof_handler(
@@ -218,7 +248,6 @@ mod tests {
 
     use super::*;
 
-    use self::nix::sys::signal::{sigaction, Signal};
     use self::rustc_demangle::demangle;
     use self::unwind_sys::*;
     use std::sync::mpsc::channel;
@@ -291,16 +320,7 @@ mod tests {
 
     #[test]
     fn test_suspend_resume() {
-        let handler = SigHandler::SigAction(sigprof_handler);
-        let action = SigAction::new(
-            handler,
-            SaFlags::SA_RESTART | SaFlags::SA_SIGINFO,
-            SigSet::empty(),
-        );
-        unsafe {
-            sigaction(Signal::SIGPROF, &action).expect("signal handler set");
-        }
-
+        let sampler = Sampler::new();
         let (tx, rx) = channel();
         // Just to get the thread to wait until the test is done.
         let (tx2, rx2) = channel();
@@ -311,8 +331,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        suspend_and_resume_thread(to, || unsafe {
-            let mut context = shared_state.context.expect("should have valid context");
+        sampler.suspend_and_resume_thread(to, |context| unsafe {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 
@@ -330,16 +349,7 @@ mod tests {
     #[test]
     #[ignore] // Useful for playing around, but not required.
     fn test_suspend_resume_unwind() {
-        let handler = SigHandler::SigAction(sigprof_handler);
-        let action = SigAction::new(
-            handler,
-            SaFlags::SA_RESTART | SaFlags::SA_SIGINFO,
-            SigSet::empty(),
-        );
-        unsafe {
-            sigaction(Signal::SIGPROF, &action).expect("signal handler set");
-        }
-
+        let sampler = Sampler::new();
         let (tx, rx) = channel();
         // Just to get the thread to wait until the test is done.
         let (tx2, rx2) = channel();
@@ -361,8 +371,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        suspend_and_resume_thread(to, || unsafe {
-            let mut context = shared_state.context.expect("should have valid context");
+        sampler.suspend_and_resume_thread(to, |context| unsafe {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 
@@ -370,7 +379,7 @@ mod tests {
             let mut offset = 0;
             // A unw_context_t is an alias to the ucontext_t as clarified by the docs, so we can
             // use the signal context.
-            unw_init_local(&mut cursor, &mut context);
+            unw_init_local(&mut cursor, context);
             while unw_step(&mut cursor) > 0 {
                 let mut buf = vec![0; 256];
                 // This won't actually work in non-debug info ELFs.
