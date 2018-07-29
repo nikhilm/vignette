@@ -202,15 +202,25 @@ fn send_sigprof(to: libc::pid_t) {
     }
 }
 
+/// TODO: Next step is to add criterion based benchmarks.
+
+// WARNING WARNING WARNING WARNING WARNING
+//
+// These tests MUST be run sequentially (`cargo test -- --test-threads 1`) as they install signal
+// handlers that are process-wide!
 #[cfg(test)]
 mod tests {
     extern crate libc;
     extern crate nix;
+    extern crate rustc_demangle;
     extern crate std;
+    extern crate unwind_sys;
 
     use super::*;
 
     use self::nix::sys::signal::{sigaction, Signal};
+    use self::rustc_demangle::demangle;
+    use self::unwind_sys::*;
     use std::sync::mpsc::channel;
 
     static mut signal_received: bool = false;
@@ -302,9 +312,84 @@ mod tests {
 
         let to = rx.recv().unwrap();
         suspend_and_resume_thread(to, || unsafe {
-            let context = shared_state.context.expect("should have valid context");
+            let mut context = shared_state.context.expect("should have valid context");
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
+
+            // we can tell the thread to shutdown once it is resumed.
+            tx2.send(()).unwrap();
+        });
+
+        handle.join().unwrap();
+        // make sure we cleaned up.
+        unsafe {
+            assert!(shared_state.context.is_none());
+        }
+    }
+
+    #[test]
+    #[ignore] // Useful for playing around, but not required.
+    fn test_suspend_resume_unwind() {
+        let handler = SigHandler::SigAction(sigprof_handler);
+        let action = SigAction::new(
+            handler,
+            SaFlags::SA_RESTART | SaFlags::SA_SIGINFO,
+            SigSet::empty(),
+        );
+        unsafe {
+            sigaction(Signal::SIGPROF, &action).expect("signal handler set");
+        }
+
+        let (tx, rx) = channel();
+        // Just to get the thread to wait until the test is done.
+        let (tx2, rx2) = channel();
+        let handle = spawn(move || {
+            let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+            let baz = || {
+                tx.send(tid).unwrap();
+                rx2.recv().unwrap();
+            };
+            let bar = || {
+                baz();
+            };
+
+            let foo = || {
+                bar();
+            };
+
+            foo();
+        });
+
+        let to = rx.recv().unwrap();
+        suspend_and_resume_thread(to, || unsafe {
+            let mut context = shared_state.context.expect("should have valid context");
+            // TODO: This is where we would want to use libunwind in a real program.
+            assert!(context.uc_stack.ss_size > 0);
+
+            let mut cursor: unw_cursor_t = mem::uninitialized();
+            let mut offset = 0;
+            // A unw_context_t is an alias to the ucontext_t as clarified by the docs, so we can
+            // use the signal context.
+            unw_init_local(&mut cursor, &mut context);
+            while unw_step(&mut cursor) > 0 {
+                let mut buf = vec![0; 256];
+                // This won't actually work in non-debug info ELFs.
+                // Plus it hurts timing.
+                let r = unw_get_proc_name(
+                    &mut cursor,
+                    buf.as_mut_ptr() as *mut i8,
+                    buf.len(),
+                    &mut offset,
+                );
+                if r < 0 {
+                    eprintln!("error {}", r);
+                } else {
+                    let len = buf.iter().position(|b| *b == 0).unwrap();
+                    buf.truncate(len);
+                    let name = String::from_utf8_lossy(&buf).into_owned();
+                    eprintln!("fn {:#}", demangle(&name));
+                }
+            }
 
             // we can tell the thread to shutdown once it is resumed.
             tx2.send(()).unwrap();

@@ -3,8 +3,12 @@ name = "vignette"
 version = "0.1.0"
 authors = ["Nikhil Marathe <nsm.nikhil@gmail.com>"]
 
-[dependencies]
-
 [target.'cfg(unix)'.dependencies]
 nix = "~0.11.0"
 libc = "~0.2.42"
+
+[target.'cfg(unix)'.dev-dependencies]
+# Right now we are only using unwind to test the signal unwinding sanity. This
+# should be moved to unwinding once ready.
+unwind-sys = "0.1.1"
+rustc-demangle = "0.1.9"
