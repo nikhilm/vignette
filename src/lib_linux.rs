@@ -1,8 +1,10 @@
 extern crate libc;
 extern crate nix;
+extern crate unwind_sys;
 
 use self::nix::sys::signal::{sigaction, Signal};
 use self::nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet};
+use self::unwind_sys::*;
 use std::cell::UnsafeCell;
 use std::fs;
 use std::io;
@@ -10,6 +12,7 @@ use std::mem;
 use std::process;
 
 // opaque wrapper around pid_t
+#[derive(Debug)]
 pub struct ThreadId(libc::pid_t);
 
 fn gettid() -> libc::pid_t {
@@ -35,7 +38,7 @@ impl PosixSemaphore {
     /// Returns a new semaphore if initialization succeeded.
     ///
     /// TODO: Consider exposing error code.
-    pub fn new(value: u32) -> io::Result<PosixSemaphore> {
+    pub fn new(value: u32) -> io::Result<Self> {
         let mut sem: libc::sem_t = unsafe { mem::uninitialized() };
         let r = unsafe {
             libc::sem_init(&mut sem, 0 /* not shared */, value)
@@ -64,6 +67,9 @@ impl PosixSemaphore {
         }
     }
 
+    /// Retries the wait if it returned due to EINTR.
+    ///
+    /// Returns Ok on success and the error on any other return value.
     pub fn wait_through_intr(&self) -> io::Result<()> {
         loop {
             match self.wait() {
@@ -83,6 +89,7 @@ impl PosixSemaphore {
 unsafe impl Sync for PosixSemaphore {}
 
 impl Drop for PosixSemaphore {
+    /// Destroys the semaphore.
     fn drop(&mut self) {
         unsafe { libc::sem_destroy(self.sem.get()) };
     }
@@ -111,6 +118,7 @@ struct SharedState {
 }
 
 // TODO: Think about how we can use some rust typisms to make this cleaner.
+// DO NOT use this from multiple threads at the same time.
 static mut SHARED_STATE: SharedState = SharedState {
     msg2: None,
     msg3: None,
@@ -144,7 +152,7 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn new() -> Sampler {
+    pub fn new() -> Self {
         let handler = SigHandler::SigAction(sigprof_handler);
         let action = SigAction::new(
             handler,
@@ -156,9 +164,18 @@ impl Sampler {
         Sampler { old_handler: old }
     }
 
-    pub fn suspend_and_resume_thread<F>(&self, thread: ThreadId, callback: F) -> ()
+    /// Calls the callback with a suspended thread, then resumes the thread.
+    ///
+    /// This function is dangerous!
+    /// 1. This function is not safe to call from multiple threads at the same time, nor is it safe
+    ///    to create multiple instances of Sampler and call this on two of them concurrently as it
+    ///    relies on global shared state.
+    /// 2. Callback must not perform any heap allocations, nor must it interact with any other
+    ///    shared locks that sampled threads can access.
+    /// 3. Callback should return as quickly as possible to keep the program performant.
+    pub fn suspend_and_resume_thread<F, T>(&self, thread: &ThreadId, callback: F) -> T
     where
-        F: Fn(&mut libc::ucontext_t) -> (),
+        F: FnOnce(&mut libc::ucontext_t) -> T,
     {
         let tid = thread.0;
         assert!(gettid() != tid, "Can't suspend sampler itself!");
@@ -177,7 +194,7 @@ impl Sampler {
                 .expect("msg2 wait succeeded");
         }
 
-        unsafe { callback(&mut SHARED_STATE.context.expect("valid context")) };
+        let results = unsafe { callback(&mut SHARED_STATE.context.expect("valid context")) };
 
         // signal the thread to continue.
         unsafe {
@@ -195,6 +212,7 @@ impl Sampler {
         }
 
         clear_shared_state();
+        results
     }
 }
 
@@ -240,6 +258,85 @@ fn send_sigprof(to: libc::pid_t) {
     }
 }
 
+/// This definition will evolve as we go along.
+pub struct Frame {
+    #[cfg(target_pointer_width = "32")]
+    pub ip: u32,
+    #[cfg(target_pointer_width = "64")]
+    pub ip: u64,
+}
+
+/// Support for collecting one sample.
+///
+/// A sample should be created, then passed the context to unwind and finally one can retrieve the
+/// frames.
+///
+/// Creation should be done outside the suspend_and_resume_thread call!
+pub struct Sample {
+    frames: Vec<Frame>,
+}
+
+impl Sample {
+    /// Creates a new Sample.
+    ///
+    /// This sample will hold upto max_frames frames.
+    /// The collection begins from the bottom-most function on the stack, so once the limit is
+    /// reached, top frames are dropped.
+    ///
+    /// This is NOT safe to use within suspend_and_resume_thread.
+    pub fn new(max_frames: usize) -> Self {
+        Sample {
+            frames: Vec::with_capacity(max_frames),
+        }
+    }
+
+    // TODO: Use failure for better errors + wrap unwind errors.
+    /// Unwind a stack from a context.
+    ///
+    /// Returns the collected frames.
+    /// The length of the vector is the actual collected frames (<= max_frames).
+    ///
+    /// This IS safe to use within suspend_and_resume_thread.
+    ///
+    /// TODO: Right now if stepping fails, this whole function fails, but we may want to return the
+    /// frames we have. We also probably want another state to indicate we had more frames than
+    /// capacity, so users can report some kind of stats.
+    pub fn collect(mut self, context: &mut libc::ucontext_t) -> Result<Vec<Frame>, i32> {
+        // This is a stack allocation, so it is OK.
+        let mut cursor: unw_cursor_t = unsafe { mem::uninitialized() };
+
+        // A unw_context_t is an alias to the ucontext_t as clarified by the docs, so we can
+        // use the signal context.
+        let init = unsafe { unw_init_local(&mut cursor, context) };
+        if init < 0 {
+            return Err(init);
+        }
+        loop {
+            if self.frames.len() == self.frames.capacity() {
+                break;
+            }
+            let step = unsafe { unw_step(&mut cursor) };
+            if step == 0 {
+                // No more frames.
+                break;
+            } else if step < 0 {
+                return Err(step);
+            }
+
+            let mut ip = 0;
+            let rr = unsafe { unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) };
+            if rr < 0 {
+                return Err(rr);
+            }
+            // Move semantics OK as there is no allocation.
+            let frame = Frame { ip: ip };
+            self.frames.push(frame);
+        }
+
+        return Ok(self.frames);
+    }
+}
+
 /// TODO: Next step is to add criterion based benchmarks.
 
 // WARNING WARNING WARNING WARNING WARNING
@@ -252,12 +349,10 @@ mod tests {
     extern crate nix;
     extern crate rustc_demangle;
     extern crate std;
-    extern crate unwind_sys;
 
     use super::*;
 
     use self::rustc_demangle::demangle;
-    use self::unwind_sys::*;
     use std::sync::mpsc::channel;
     use std::sync::Arc;
     use std::thread::spawn;
@@ -339,7 +434,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        sampler.suspend_and_resume_thread(to, |context| {
+        sampler.suspend_and_resume_thread(&to, |context| {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 
@@ -359,7 +454,7 @@ mod tests {
     fn test_suspend_resume_itself() {
         let sampler = Sampler::new();
         let to = get_current_thread();
-        sampler.suspend_and_resume_thread(to, |_| {});
+        sampler.suspend_and_resume_thread(&to, |_| {});
     }
 
     #[test]
@@ -386,7 +481,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        sampler.suspend_and_resume_thread(to, |context| unsafe {
+        sampler.suspend_and_resume_thread(&to, |context| unsafe {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 

@@ -25,7 +25,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        sampler.suspend_and_resume_thread(to, |context| {
+        sampler.suspend_and_resume_thread(&to, |context| {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 
