@@ -2,14 +2,11 @@ extern crate libc;
 extern crate nix;
 extern crate unwind_sys;
 
-use self::nix::sys::signal::{sigaction, Signal};
-use self::nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet};
-use self::unwind_sys::*;
-use std::cell::UnsafeCell;
-use std::fs;
-use std::io;
-use std::mem;
-use std::process;
+use self::{
+    nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal},
+    unwind_sys::*,
+};
+use std::{cell::UnsafeCell, fs, io, mem, process};
 
 // opaque wrapper around pid_t
 #[derive(Debug)]
@@ -359,9 +356,10 @@ mod tests {
     use super::*;
 
     use self::rustc_demangle::demangle;
-    use std::sync::mpsc::channel;
-    use std::sync::Arc;
-    use std::thread::spawn;
+    use std::{
+        sync::{mpsc::channel, Arc},
+        thread::spawn,
+    };
 
     static mut SIGNAL_RECEIVED: bool = false;
 

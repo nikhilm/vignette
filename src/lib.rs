@@ -9,8 +9,7 @@ pub use lib_linux::*;
 mod tests {
     extern crate libc;
     use super::*;
-    use std::thread::spawn;
-    use std::sync::mpsc::channel;
+    use std::{sync::mpsc::channel, thread::spawn};
 
     #[cfg(target_os = "linux")]
     #[test]

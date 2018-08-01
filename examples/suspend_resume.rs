@@ -1,8 +1,10 @@
 extern crate vignette;
 
-use std::cell::RefCell;
-use std::sync::{Arc, RwLock};
-use std::thread::spawn;
+use std::{
+    cell::RefCell,
+    sync::{Arc, RwLock},
+    thread::spawn,
+};
 
 use vignette::{is_current_thread, thread_iterator, Sampler};
 

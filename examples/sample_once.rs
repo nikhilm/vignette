@@ -1,7 +1,9 @@
 extern crate vignette;
 
-use std::sync::{Arc, RwLock};
-use std::thread::spawn;
+use std::{
+    sync::{Arc, RwLock},
+    thread::spawn,
+};
 
 use vignette::{get_current_thread, is_current_thread, thread_iterator, Frame, Sample, Sampler};
 
@@ -20,6 +22,24 @@ fn boring_one(running2: Arc<RwLock<bool>>) {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     println!("boring thread {:?}", get_current_thread());
+}
+
+fn sample_once(sampler: &Sampler, thread: &vignette::ThreadId) {
+    let sample = Sample::new(20);
+    // This is an abomination we should get rid of.
+    let mut frames: Option<Vec<Frame>> = None;
+    frames.get_or_insert(sampler.suspend_and_resume_thread(thread, move |context| {
+        // TODO: For perf we probably actually want to allow re-use of the sample storage,
+        // instead of allocating new frames above every time.
+        // i.e. once a sample has been captured and turned into some other representation, we
+        // could re-use the vector.
+        sample.collect(context).expect("sample succeeded")
+    }));
+
+    println!("Thread {:?}", thread);
+    for frame in frames.unwrap().iter() {
+        println!("  IP: 0x{:x}", frame.ip);
+    }
 }
 
 fn main() {
@@ -52,25 +72,8 @@ fn main() {
         if is_current_thread(&thread) {
             continue;
         }
-
-        let sample = Sample::new(20);
-        // This is an abomination we should get rid of.
-        let mut frames: Option<Vec<Frame>> = None;
-        // There is actually a design problem here.
-        // We need to create frames outside for lexical scope reasons, but then the closure won't
-        // be allowed to modify it without refcell crap.
-        // Is a closure the right call? Should we pull it out into a function?
-        frames.get_or_insert(sampler.suspend_and_resume_thread(&thread, move |context| {
-            // TODO: For perf we probably actually want to allow re-use of the sample storage,
-            // instead of allocating new frames above every time.
-            // i.e. once a sample has been captured and turned into some other representation, we
-            // could re-use the vector.
-            sample.collect(context).expect("sample succeeded")
-        }));
-
-        println!("Thread {:?}", thread);
-        for frame in frames.unwrap().iter() {
-            println!("  IP: 0x{:x}", frame.ip);
+        for _ in 0..2 {
+            sample_once(&sampler, &thread);
         }
     }
 
