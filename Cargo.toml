@@ -2,6 +2,7 @@
 name = "vignette"
 version = "0.1.0"
 authors = ["Nikhil Marathe <nsm.nikhil@gmail.com>"]
+license = "MIT OR Apache-2.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = "~0.11.0"
