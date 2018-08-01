@@ -161,6 +161,7 @@ impl Sampler {
         F: Fn(&mut libc::ucontext_t) -> (),
     {
         let tid = thread.0;
+        assert!(gettid() != tid, "Can't suspend sampler itself!");
 
         // first we reinitialize the semaphores
         reset_shared_state();
@@ -351,6 +352,14 @@ mod tests {
         unsafe {
             assert!(SHARED_STATE.context.is_none());
         }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_suspend_resume_itself() {
+        let sampler = Sampler::new();
+        let to = get_current_thread();
+        sampler.suspend_and_resume_thread(to, |_| {});
     }
 
     #[test]
