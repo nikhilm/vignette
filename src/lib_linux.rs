@@ -216,6 +216,12 @@ impl Sampler {
     }
 }
 
+impl Default for Sampler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drop for Sampler {
     fn drop(&mut self) {
         unsafe {
@@ -329,11 +335,11 @@ impl Sample {
                 return Err(rr);
             }
             // Move semantics OK as there is no allocation.
-            let frame = Frame { ip: ip };
+            let frame = Frame { ip };
             self.frames.push(frame);
         }
 
-        return Ok(self.frames);
+        Ok(self.frames)
     }
 }
 
