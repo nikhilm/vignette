@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::sync::{Arc, RwLock};
 use std::thread::spawn;
 
-use vignette::{gettid, thread_iterator, Sampler};
+use vignette::{is_current_thread, thread_iterator, Sampler};
 
 fn main() {
     // Spawn a bunch of threads, then sample them.
@@ -18,22 +18,21 @@ fn main() {
             }
         }))
     }
-    println!("Sampler thread is {}", gettid());
     println!("Spawned {} threads", handles.len());
 
     let sampler = Sampler::new();
     let counter = RefCell::new(0);
 
     let threads = thread_iterator().expect("threads");
-    for thread in threads {
-        let tid = thread.expect("tid");
-        if tid == gettid() {
+    for (i, res) in threads.enumerate() {
+        let thread = res.expect("thread");
+        if is_current_thread(&thread) {
             continue;
         }
 
-        sampler.suspend_and_resume_thread(tid, |context| {
+        sampler.suspend_and_resume_thread(thread, |context| {
             *counter.borrow_mut() += 1;
-            println!("Thread {} SP = {:p}", tid, context.uc_stack.ss_sp);
+            println!("Thread {} SP = {:p}", i, context.uc_stack.ss_sp);
         });
     }
 

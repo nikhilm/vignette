@@ -9,9 +9,21 @@ use std::io;
 use std::mem;
 use std::process;
 
-pub fn gettid() -> libc::pid_t {
+// opaque wrapper around pid_t
+pub struct ThreadId(libc::pid_t);
+
+fn gettid() -> libc::pid_t {
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }
+
+pub fn get_current_thread() -> ThreadId {
+    ThreadId(gettid())
+}
+
+pub fn is_current_thread(id: &ThreadId) -> bool {
+    gettid() == id.0
+}
+
 /// wraps a POSIX semaphore
 ///
 /// We need to use these as only sem_post is required to be signal safe.
@@ -79,12 +91,12 @@ impl Drop for PosixSemaphore {
 /// Iterates over task threads by reading /proc.
 ///
 /// IMPORTANT: This iterator also returns the sampling thread!
-pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<libc::pid_t>>> {
+pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<ThreadId>>> {
     fs::read_dir("/proc/self/task").map(|r| {
         r.map(|entry| {
             entry.map(|dir_entry| {
                 let file = dir_entry.file_name().into_string().expect("valid utf8");
-                file.parse::<libc::pid_t>().expect("tid should be pid_t")
+                ThreadId(file.parse::<libc::pid_t>().expect("tid should be pid_t"))
             })
         })
     })
@@ -144,12 +156,11 @@ impl Sampler {
         Sampler { old_handler: old }
     }
 
-    pub fn suspend_and_resume_thread<F>(&self, tid: libc::pid_t, callback: F) -> ()
+    pub fn suspend_and_resume_thread<F>(&self, thread: ThreadId, callback: F) -> ()
     where
         F: Fn(&mut libc::ucontext_t) -> (),
     {
-        // TODO: In particular, this should ensure that we only call it after the SIGPROF handler has
-        // been registered correctly.
+        let tid = thread.0;
 
         // first we reinitialize the semaphores
         reset_shared_state();
@@ -308,12 +319,11 @@ mod tests {
 
     #[test]
     fn test_thread_iterator() {
-        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
         let tasks: Vec<libc::pid_t> = thread_iterator()
             .expect("threads")
-            .map(|x| x.expect("tid listed"))
+            .map(|x| x.expect("tid listed").0)
             .collect();
-        assert!(tasks.contains(&tid));
+        assert!(tasks.contains(&gettid()));
     }
 
     #[test]
@@ -323,8 +333,7 @@ mod tests {
         // Just to get the thread to wait until the test is done.
         let (tx2, rx2) = channel();
         let handle = spawn(move || {
-            let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
-            tx.send(tid).unwrap();
+            tx.send(ThreadId(gettid())).unwrap();
             rx2.recv().unwrap();
         });
 
@@ -352,9 +361,8 @@ mod tests {
         // Just to get the thread to wait until the test is done.
         let (tx2, rx2) = channel();
         let handle = spawn(move || {
-            let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
             let baz = || {
-                tx.send(tid).unwrap();
+                tx.send(ThreadId(gettid())).unwrap();
                 rx2.recv().unwrap();
             };
             let bar = || {

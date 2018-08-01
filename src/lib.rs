@@ -3,6 +3,8 @@ mod lib_linux;
 #[cfg(target_os = "linux")]
 pub use lib_linux::*;
 
+// next step is to add IP grabbing using libunwind-sys.
+
 #[cfg(test)]
 mod tests {
     extern crate libc;
@@ -18,8 +20,7 @@ mod tests {
         // Just to get the thread to wait until the test is done.
         let (tx2, rx2) = channel();
         let handle = spawn(move || {
-            let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
-            tx.send(tid).unwrap();
+            tx.send(get_current_thread()).unwrap();
             rx2.recv().unwrap();
         });
 
