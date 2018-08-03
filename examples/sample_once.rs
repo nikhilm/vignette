@@ -1,5 +1,6 @@
 extern crate vignette;
 
+use std::io::Read;
 use std::{
     sync::{Arc, RwLock},
     thread::spawn,
@@ -87,4 +88,8 @@ fn main() {
     }
 
     println!("Done");
+    let mut file = std::fs::File::open("/proc/self/maps").unwrap();
+    let mut contents = String::new();
+    file.read_to_string(&mut contents);
+    println!("{}", contents);
 }

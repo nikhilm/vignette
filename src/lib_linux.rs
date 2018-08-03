@@ -92,6 +92,12 @@ impl Drop for PosixSemaphore {
     }
 }
 
+// TODO: Add a test for ensuring we don't sample over capacity.
+// Then we can look at storing module info and post-facto symbolication using either debug files or sym files.
+// options are
+// 1. use the breakpad-symbols crate + dump_syms.
+// 2. use goblin over the unstripped binaries.
+
 /// Iterates over task threads by reading /proc.
 ///
 /// IMPORTANT: This iterator also returns the sampling thread!

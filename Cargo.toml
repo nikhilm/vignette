@@ -11,9 +11,13 @@ unwind-sys = "0.1.1"
 
 [target.'cfg(unix)'.dev-dependencies]
 rustc-demangle = "0.1.9"
+breakpad-symbols = "0.1.1"
 
 [[example]]
 name = "suspend_resume"
 
 [[example]]
 name = "sample_once"
+
+[[example]]
+name = "lookup_symbol"
