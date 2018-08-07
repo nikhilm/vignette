@@ -3,21 +3,26 @@
 extern crate breakpad_symbols;
 
 use breakpad_symbols::SymbolFile;
+use std::path::Path;
 
-const USAGE: &str = "<addr hex with 0x prefix> <path to sym>";
+const USAGE: &str = "<path to sym> <addr hex without 0x prefix>";
 
 fn main() {
     let mut args = std::env::args();
 
     let prog = args.next().expect("program itself");
-    let addr_s = match args.next() {
+    let sym_path = match args.next() {
         Some(x) => x,
-        None => panic!("{} {}", USAGE, prog),
+        None => panic!("{} {}", prog, USAGE),
     };
-    let sympath = match args.next() {
-        Some(x) => x,
-        None => panic!("{} {}", USAGE, prog),
+    let addr = match args.next() {
+        Some(x) => u64::from_str_radix(&x, 16).expect("valid hex address"),
+        None => panic!("{} {}", prog, USAGE),
     };
 
-    SymbolFile::from_file(sympath).expect("valid sym file");
+    let sym_file = SymbolFile::from_file(Path::new(&sym_path)).expect("valid sym file");
+    let sym = sym_file
+        .find_nearest_public(addr)
+        .expect("found some symbol");
+    println!("Symbol: {:?}", sym);
 }
