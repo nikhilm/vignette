@@ -5,6 +5,8 @@ pub use lib_linux::*;
 
 // next step is to add IP grabbing using libunwind-sys.
 
+mod module_cache;
+
 #[cfg(test)]
 mod tests {
     extern crate libc;
