@@ -1,3 +1,5 @@
+#![feature(range_contains)]
+
 #[cfg(target_os = "linux")]
 mod lib_linux;
 #[cfg(target_os = "linux")]
