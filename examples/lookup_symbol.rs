@@ -1,6 +1,8 @@
 /// Given an address and the location of breakpad generated symbols, tries to find the relevant
 /// symbol.
 extern crate breakpad_symbols;
+extern crate rustc_demangle;
+use self::rustc_demangle::demangle;
 
 use breakpad_symbols::SymbolFile;
 use std::path::Path;
@@ -20,6 +22,6 @@ fn main() {
     for addr in args {
         let ip = u64::from_str_radix(&addr, 16).expect("valid hex address");
         let sym = sym_file.find_nearest_public(ip).expect("found some symbol");
-        println!("Symbol: {:?}", sym);
+        println!("Symbol: {}", demangle(&sym.name));
     }
 }
