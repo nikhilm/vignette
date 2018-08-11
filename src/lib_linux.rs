@@ -268,6 +268,7 @@ fn send_sigprof(to: libc::pid_t) {
 }
 
 /// This definition will evolve as we go along.
+#[derive(Debug)]
 pub struct Frame {
     #[cfg(target_pointer_width = "32")]
     pub ip: u32,

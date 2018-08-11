@@ -1,7 +1,6 @@
 extern crate goblin;
 extern crate hex;
 extern crate libc;
-extern crate proc_maps;
 
 use self::goblin::elf::header::header64::{Header, SIZEOF_EHDR};
 use self::goblin::elf::note::NT_GNU_BUILD_ID;
@@ -9,7 +8,6 @@ use self::goblin::elf::program_header::program_header64::ProgramHeader;
 use self::goblin::elf::section_header::section_header64::SectionHeader;
 use self::goblin::elf::section_header::SHT_NOTE;
 use self::goblin::elf::Elf;
-use self::proc_maps::get_process_maps;
 use std::ffi::CStr;
 use std::fs::File;
 use std::io::Read;
@@ -26,6 +24,8 @@ pub struct ModuleInfo {
     pub name: String,
     pub build_id: String,
 }
+
+pub type ModuleAndAddr = (ModuleInfo, usize);
 
 #[derive(Debug, Clone)]
 struct ExtraModuleInfo {
@@ -44,6 +44,7 @@ pub struct ModuleCache {
     module_ranges: Vec<ExtraModuleInfo>,
 }
 
+// TODO: write more tests
 impl ModuleCache {
     pub fn new() -> Self {
         ModuleCache {
@@ -51,21 +52,24 @@ impl ModuleCache {
         }
     }
 
-    fn find_existing(&self, addr: *const libc::c_void) -> Option<ModuleInfo> {
-        let existing = self.module_ranges.iter().find(|module| {
-            eprintln!("Searching existing {:?}", module);
-            module.range.contains(&(addr as usize))
-        });
-        existing.map(|x| x.info.clone())
+    fn find_existing(&self, addr: *const libc::c_void) -> Option<ExtraModuleInfo> {
+        let existing = self
+            .module_ranges
+            .iter()
+            .find(|module| module.range.contains(&(addr as usize)));
+        existing.map(|x| x.clone())
     }
 
-    pub fn get_or_insert(&mut self, addr: *const libc::c_void) -> Option<ModuleInfo> {
-        if let Some(module) = self.find_existing(addr) {
-            eprintln!("Found existing {:?} for {}", module, addr as usize);
-            return Some(module);
-        }
+    fn relative_addr(info: &ExtraModuleInfo, addr: *const libc::c_void) -> usize {
+        assert!(info.range.contains(&(addr as usize)));
+        return (addr as usize) - info.range.start;
+    }
 
-        eprintln!("Not found");
+    pub fn get_or_insert(&mut self, addr: *const libc::c_void) -> Option<ModuleAndAddr> {
+        if let Some(module) = self.find_existing(addr) {
+            let rva = Self::relative_addr(&module, addr);
+            return Some((module.info.clone(), rva));
+        }
 
         let mut mod_info: libc::Dl_info = unsafe { mem::uninitialized() };
         let r = unsafe { libc::dladdr(addr as *const libc::c_void, &mut mod_info) };
@@ -105,7 +109,6 @@ impl ModuleCache {
 
         let build_id = build_id_opt.unwrap();
         let base = mod_info.dli_fbase as usize;
-        eprintln!("Path {:?}", path);
 
         // Try to find a module info matching these attributes and adjust it's range if required.
         // Otherwise insert one.
@@ -113,18 +116,16 @@ impl ModuleCache {
         let name = path.file_name().expect("file name").to_str().expect("utf8");
         {
             let mut existing = self.module_ranges.iter_mut().find(|module| {
-                eprintln!("searching {:?}", module);
                 module.info.name == name
                     && module.info.build_id == build_id
                     && module.range.start == base
             });
 
             if let Some(module) = existing {
-                eprintln!("found existing module, gonna fix range");
                 assert!(addr as usize >= module.range.start);
-                module.range = (module.range.start..(addr as usize).max(module.range.end));
-                eprintln!("fixed module {:?}", module);
-                return Some(module.info.clone());
+                module.range = (module.range.start..((addr as usize) + 1).max(module.range.end));
+                let rva = Self::relative_addr(&module, addr);
+                return Some((module.info.clone(), rva));
             }
         }
 
@@ -136,9 +137,9 @@ impl ModuleCache {
             },
         };
 
-        eprintln!("Gonna insert new {:?}", new);
         self.module_ranges.push(new.clone());
-        Some(new.info)
+        let rva = Self::relative_addr(&new, addr);
+        Some((new.info, rva))
     }
 }
 
@@ -153,8 +154,19 @@ mod tests {
     #[test]
     fn test_cache() {
         let mut cache = ModuleCache::new();
-        let entry = cache.get_or_insert((&ModuleCache::new as *const _) as *const libc::c_void);
-        assert!(entry.is_some());
+        let (entry, rva) = cache
+            .get_or_insert((&ModuleCache::new as *const _) as *const libc::c_void)
+            .unwrap();
+        assert_eq!(
+            entry.name,
+            env::current_exe()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        eprintln!("RVA 0x{:x}", rva);
 
         let pth = CString::new("/lib/x86_64-linux-gnu/libpthread.so.0").unwrap();
         let handle = unsafe { libc::dlopen(pth.as_ptr(), libc::RTLD_LAZY) };
@@ -163,14 +175,17 @@ mod tests {
         let mutex_init = CString::new("pthread_mutex_init").unwrap();
         let mutex_init_addr = unsafe { libc::dlsym(handle, mutex_init.as_ptr()) };
         eprintln!("pthread_mutex_init {:?}", mutex_init_addr);
-        let pthread_entry = cache.get_or_insert(mutex_init_addr).unwrap();
-        assert!(pthread_entry.name == "libpthread.so.0");
+        let (pthread_entry, init_rva) = cache.get_or_insert(mutex_init_addr).unwrap();
+        assert_eq!(pthread_entry.name, "libpthread.so.0");
 
         let mutex_destroy = CString::new("pthread_mutex_destroy").unwrap();
         let mutex_destroy_addr = unsafe { libc::dlsym(handle, mutex_destroy.as_ptr()) };
         eprintln!("pthread_mutex_destroy {:?}", mutex_destroy_addr);
-        let pthread_entry2 = cache.get_or_insert(mutex_destroy_addr).unwrap();
-        assert!(pthread_entry == pthread_entry2);
+        let (pthread_entry2, destroy_rva) = cache.get_or_insert(mutex_destroy_addr).unwrap();
+        assert_eq!(pthread_entry, pthread_entry2);
+        assert!(init_rva < destroy_rva);
+        eprintln!("init RVA 0x{:x}", init_rva);
+        eprintln!("destroy RVA 0x{:x}", destroy_rva);
     }
 
     #[test]
