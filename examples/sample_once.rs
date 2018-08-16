@@ -1,14 +1,61 @@
 extern crate libc;
 extern crate vignette;
 
+#[macro_use]
+extern crate serde_derive;
+
+extern crate serde;
+extern crate serde_json;
+
+use std::collections::HashMap;
+use std::fs::File;
 use std::io::Read;
+use std::process;
 use std::{
     sync::{Arc, RwLock},
     thread::spawn,
 };
 
 use vignette::module_cache::ModuleCache;
-use vignette::{get_current_thread, is_current_thread, thread_iterator, Frame, Sample, Sampler};
+use vignette::{
+    get_current_thread, is_current_thread, thread_iterator, Frame, Sample, Sampler, ThreadId,
+};
+
+mod output {
+    use vignette::ThreadId;
+
+    // Obviously not an efficient output format.
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Frame {
+        pub module_index: u32,
+        pub relative_ip: u64,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Sample {
+        pub frames: Vec<Frame>,
+    }
+
+    pub type Samples = Vec<Sample>;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Thread {
+        pub thread_id: ThreadId,
+        pub samples: Samples,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct Module {
+        pub name: String,
+        pub build_id: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Profile {
+        pub modules: Vec<Module>,
+        pub threads: Vec<Thread>,
+    }
+}
 
 fn fun_one(running2: Arc<RwLock<bool>>) {
     while *(running2.read().unwrap()) {
@@ -67,6 +114,8 @@ fn main() {
     let sampler = Sampler::new();
     let mut module_cache = ModuleCache::new();
 
+    let mut thread_map: HashMap<ThreadId, output::Samples> = HashMap::new();
+    let mut module_list = Vec::new();
     let threads = thread_iterator().expect("threads");
     for res in threads {
         let thread = res.expect("thread");
@@ -75,16 +124,36 @@ fn main() {
         }
         let frames = sample_once(&sampler, &thread);
         if let Some(frames) = frames {
+            let mut sample = output::Sample { frames: vec![] };
             for frame in frames {
                 match module_cache.get_or_insert(frame.ip as *const libc::c_void) {
                     Some((module, rva)) => {
                         eprintln!("ip: 0x{:x} {:?} 0x{:x}", frame.ip, module, rva);
+                        let out_mod = output::Module {
+                            name: module.name,
+                            build_id: module.build_id,
+                        };
+                        let mut index = 0;
+                        let mut search = module_list.iter().position(|p| *p == out_mod);
+                        match search {
+                            Some(i) => index = i,
+                            None => {
+                                module_list.push(out_mod);
+                                index = module_list.len();
+                            }
+                        }
+                        sample.frames.push(output::Frame {
+                            module_index: index as u32,
+                            relative_ip: rva as u64,
+                        });
                     }
                     None => {
                         eprintln!("ip: 0x{:x}", frame.ip);
                     }
                 }
             }
+            let samples: output::Samples = vec![sample];
+            thread_map.insert(thread, samples);
         }
     }
 
@@ -98,4 +167,20 @@ fn main() {
     }
 
     println!("Done sampling");
+
+    let mut threads = vec![];
+    for (thread_id, samples) in thread_map.into_iter() {
+        threads.push(output::Thread { thread_id, samples });
+    }
+
+    let profile = output::Profile {
+        modules: module_list,
+        threads: threads,
+    };
+
+    let filename = format!("{}.vignette", process::id());
+    let mut file = File::create(&filename).unwrap();
+    serde_json::to_writer_pretty(file, &profile).unwrap();
+    println!("Wrote to {}", filename);
+    // file.write_all().unwrap();
 }

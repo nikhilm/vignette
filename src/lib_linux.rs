@@ -9,7 +9,7 @@ use self::{
 use std::{cell::UnsafeCell, fs, io, mem, process};
 
 // opaque wrapper around pid_t
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadId(libc::pid_t);
 
 fn gettid() -> libc::pid_t {

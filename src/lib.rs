@@ -1,5 +1,8 @@
 #![feature(range_contains)]
 
+#[macro_use]
+extern crate serde_derive;
+
 #[cfg(target_os = "linux")]
 mod lib_linux;
 #[cfg(target_os = "linux")]
