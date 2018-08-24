@@ -7,6 +7,13 @@ use self::rustc_demangle::demangle;
 use breakpad_symbols::SymbolFile;
 use std::path::Path;
 
+// TODO
+// Change this example to use symbolic crate instead of breakpad_symbols and use SymCache plus
+// FatObject.
+//
+// Use the output module to parse in an IP based module, add a new output::ResolvedFrame and
+// convert to ResolvedFrames and write out.
+
 const USAGE: &str = "<path to sym> [<addr hex without 0x prefix>]...";
 
 fn main() {
