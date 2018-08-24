@@ -87,6 +87,41 @@ fn sample_once(sampler: &Sampler, thread: &vignette::ThreadId) -> Vec<Frame> {
     frames
 }
 
+fn output_sample(
+    module_cache: &mut ModuleCache,
+    module_list: &mut Vec<output::Module>,
+    frames: Vec<Frame>,
+) -> output::Sample {
+    let mut sample = output::Sample { frames: vec![] };
+    for frame in frames {
+        match module_cache.get_or_insert(frame.ip as *const libc::c_void) {
+            Some((module, rva)) => {
+                let out_mod = output::Module {
+                    name: module.name,
+                    build_id: module.build_id,
+                };
+                let mut index = 0;
+                let mut search = module_list.iter().position(|p| *p == out_mod);
+                match search {
+                    Some(i) => index = i,
+                    None => {
+                        index = module_list.len();
+                        module_list.push(out_mod);
+                    }
+                }
+                sample.frames.push(output::Frame {
+                    module_index: index as u32,
+                    relative_ip: rva as u64,
+                });
+            }
+            None => {
+                eprintln!("ip: 0x{:x}", frame.ip);
+            }
+        }
+    }
+    sample
+}
+
 fn main() {
     // Spawn a bunch of threads, then sample them.
     let running = Arc::new(RwLock::new(true));
@@ -120,35 +155,13 @@ fn main() {
         if is_current_thread(&thread) {
             continue;
         }
+        let mut samples: output::Samples = Vec::with_capacity(2);
         let frames = sample_once(&sampler, &thread);
-        let mut sample = output::Sample { frames: vec![] };
-        for frame in frames {
-            match module_cache.get_or_insert(frame.ip as *const libc::c_void) {
-                Some((module, rva)) => {
-                    let out_mod = output::Module {
-                        name: module.name,
-                        build_id: module.build_id,
-                    };
-                    let mut index = 0;
-                    let mut search = module_list.iter().position(|p| *p == out_mod);
-                    match search {
-                        Some(i) => index = i,
-                        None => {
-                            index = module_list.len();
-                            module_list.push(out_mod);
-                        }
-                    }
-                    sample.frames.push(output::Frame {
-                        module_index: index as u32,
-                        relative_ip: rva as u64,
-                    });
-                }
-                None => {
-                    eprintln!("ip: 0x{:x}", frame.ip);
-                }
-            }
-        }
-        let samples: output::Samples = vec![sample];
+        let sample = output_sample(&mut module_cache, &mut module_list, frames);
+        samples.push(sample);
+        let frames = sample_once(&sampler, &thread);
+        let sample = output_sample(&mut module_cache, &mut module_list, frames);
+        samples.push(sample);
         thread_map.insert(thread, samples);
     }
 
@@ -177,7 +190,4 @@ fn main() {
     let mut file = File::create(&filename).unwrap();
     serde_json::to_writer_pretty(file, &profile).unwrap();
     println!("Wrote to {}", filename);
-    // file.write_all().unwrap();
-    //
-    // TODO: Move this module lookup and serialization stuff to a module and add tests.
 }
