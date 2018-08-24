@@ -192,4 +192,10 @@ mod tests {
     fn test_rva() {
         let cache = ModuleCache::new();
     }
+
+    #[test]
+    fn test_fail() {
+        // Reminder that we need more tests.
+        assert!(false);
+    }
 }
