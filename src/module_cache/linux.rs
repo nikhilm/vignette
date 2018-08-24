@@ -77,13 +77,17 @@ impl ModuleCache {
         }
 
         let cpath = unsafe { CStr::from_ptr(mod_info.dli_fname) };
+        // Theoretically, SHT_NOTE gets converted to PT_NOTE, which should always be loaded, so we
+        // can manually walk ELF headers and Phdrs to extract a build ID without having to re-mmap
+        // each file. Goblin can't do it since it is expecting a complete ELF file, but perhaps we
+        // can use segments of it. Something to optimize in the future.
         let path = Path::new(cpath.to_str().expect("valid path"));
         let file = File::open(&path).expect("valid file");
         let mapped = unsafe { MmapOptions::new().map(&file).expect("mmap") };
         let elf = Elf::parse(&mapped).expect("valid elf");
         // aaaaa! go back to possibly parsing file section by section and doing the string table
         // lookup ourselves.
-        let mut notes = elf.iter_note_sections(&mapped, None).unwrap();
+        let mut notes = elf.iter_note_headers(&mapped).unwrap();
         let mut build_id_opt = None;
         for note_r in notes {
             let note = note_r.unwrap();
