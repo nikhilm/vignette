@@ -11,6 +11,7 @@ pub use lib_linux::*;
 // next step is to add IP grabbing using libunwind-sys.
 
 pub mod module_cache;
+pub mod output;
 
 #[cfg(test)]
 mod tests {
