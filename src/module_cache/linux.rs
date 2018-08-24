@@ -2,11 +2,7 @@ extern crate goblin;
 extern crate hex;
 extern crate libc;
 
-use self::goblin::elf::header::header64::{Header, SIZEOF_EHDR};
 use self::goblin::elf::note::NT_GNU_BUILD_ID;
-use self::goblin::elf::program_header::program_header64::ProgramHeader;
-use self::goblin::elf::section_header::section_header64::SectionHeader;
-use self::goblin::elf::section_header::SHT_NOTE;
 use self::goblin::elf::Elf;
 use std::ffi::CStr;
 use std::fs::File;
@@ -82,6 +78,7 @@ impl ModuleCache {
         let path = Path::new(cpath.to_str().expect("valid path"));
         let mut file = File::open(&path).expect("valid file");
         let mut contents = Vec::new();
+        // TODO: Use mmap
         file.read_to_end(&mut contents);
         let elf = Elf::parse(&contents).expect("valid elf");
         // aaaaa! go back to possibly parsing file section by section and doing the string table
