@@ -1,9 +1,11 @@
 extern crate goblin;
 extern crate hex;
 extern crate libc;
+extern crate memmap;
 
 use self::goblin::elf::note::NT_GNU_BUILD_ID;
 use self::goblin::elf::Elf;
+use self::memmap::MmapOptions;
 use std::ffi::CStr;
 use std::fs::File;
 use std::io::Read;
@@ -76,14 +78,12 @@ impl ModuleCache {
 
         let cpath = unsafe { CStr::from_ptr(mod_info.dli_fname) };
         let path = Path::new(cpath.to_str().expect("valid path"));
-        let mut file = File::open(&path).expect("valid file");
-        let mut contents = Vec::new();
-        // TODO: Use mmap
-        file.read_to_end(&mut contents);
-        let elf = Elf::parse(&contents).expect("valid elf");
+        let file = File::open(&path).expect("valid file");
+        let mapped = unsafe { MmapOptions::new().map(&file).expect("mmap") };
+        let elf = Elf::parse(&mapped).expect("valid elf");
         // aaaaa! go back to possibly parsing file section by section and doing the string table
         // lookup ourselves.
-        let mut notes = elf.iter_note_sections(&contents, None).unwrap();
+        let mut notes = elf.iter_note_sections(&mapped, None).unwrap();
         let mut build_id_opt = None;
         for note_r in notes {
             let note = note_r.unwrap();
