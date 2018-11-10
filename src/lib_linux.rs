@@ -8,9 +8,9 @@ use self::{
 };
 use std::{cell::UnsafeCell, fs, io, mem, process};
 
-// opaque wrapper around pid_t
+// not-so-opaque wrapper around pid_t
 #[derive(Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ThreadId(libc::pid_t);
+pub struct ThreadId(pub libc::pid_t);
 
 fn gettid() -> libc::pid_t {
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
@@ -268,7 +268,7 @@ fn send_sigprof(to: libc::pid_t) {
 }
 
 /// This definition will evolve as we go along.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct Frame {
     #[cfg(target_pointer_width = "32")]
     pub ip: u32,

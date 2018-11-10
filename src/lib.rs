@@ -12,6 +12,7 @@ pub use lib_linux::*;
 
 pub mod module_cache;
 pub mod output;
+pub mod speedscope;
 
 #[cfg(test)]
 mod tests {

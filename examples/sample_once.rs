@@ -16,7 +16,7 @@ use std::{
     thread::spawn,
 };
 
-use vignette::module_cache::ModuleCache;
+use vignette::module_cache::{ModuleCache, ModuleInfo};
 use vignette::output;
 use vignette::{
     get_current_thread, is_current_thread, thread_iterator, Frame, Sample, Sampler, ThreadId,
@@ -53,31 +53,22 @@ fn sample_once(sampler: &Sampler, thread: &vignette::ThreadId) -> Vec<Frame> {
 }
 
 fn output_sample(
-    module_cache: &mut ModuleCache,
-    module_list: &mut Vec<output::Module>,
     frames: Vec<Frame>,
+    module_cache: &mut ModuleCache,
+    module_index: &mut output::VecHashMap<ModuleInfo>,
+    frames_index: &mut output::VecHashMap<output::Frame>,
 ) -> output::Sample {
     let mut sample = output::Sample { frames: vec![] };
     for frame in frames {
         match module_cache.get_or_insert(frame.ip as *const libc::c_void) {
             Some((module, rva)) => {
-                let out_mod = output::Module {
-                    name: module.name,
-                    build_id: module.build_id,
-                };
-                let mut index = 0;
-                let mut search = module_list.iter().position(|p| *p == out_mod);
-                match search {
-                    Some(i) => index = i,
-                    None => {
-                        index = module_list.len();
-                        module_list.push(out_mod);
-                    }
-                }
-                sample.frames.push(output::Frame {
-                    module_index: index as u32,
+                let module_pos = module_index.get_or_insert(module.clone());
+                let output_frame = output::Frame {
+                    module_index: module_pos as u32,
                     relative_ip: rva as u64,
-                });
+                };
+                let frame_pos = frames_index.get_or_insert(output_frame);
+                sample.frames.push(frame_pos);
             }
             None => {
                 eprintln!("ip: 0x{:x}", frame.ip);
@@ -111,23 +102,27 @@ fn main() {
 
     let sampler = Sampler::new();
     let mut module_cache = ModuleCache::new();
+    let mut module_index: output::VecHashMap<ModuleInfo> = output::VecHashMap::new();
+    let mut frames_index: output::VecHashMap<output::Frame> = output::VecHashMap::new();
 
     let mut thread_map: HashMap<ThreadId, output::Samples> = HashMap::new();
-    let mut module_list = Vec::new();
-    let threads = thread_iterator().expect("threads");
-    for res in threads {
-        let thread = res.expect("thread");
-        if is_current_thread(&thread) {
-            continue;
+    for i in 0..20 {
+        let threads = thread_iterator().expect("threads");
+        for res in threads {
+            let thread = res.expect("thread");
+            if is_current_thread(&thread) {
+                continue;
+            }
+            let frames = sample_once(&sampler, &thread);
+            let sample = output_sample(
+                frames,
+                &mut module_cache,
+                &mut module_index,
+                &mut frames_index,
+            );
+            let samples = thread_map.entry(thread).or_insert_with(|| Vec::new());
+            samples.push(sample);
         }
-        let mut samples: output::Samples = Vec::with_capacity(2);
-        let frames = sample_once(&sampler, &thread);
-        let sample = output_sample(&mut module_cache, &mut module_list, frames);
-        samples.push(sample);
-        let frames = sample_once(&sampler, &thread);
-        let sample = output_sample(&mut module_cache, &mut module_list, frames);
-        samples.push(sample);
-        thread_map.insert(thread, samples);
     }
 
     {
@@ -146,9 +141,19 @@ fn main() {
         threads.push(output::Thread { thread_id, samples });
     }
 
+    let module_list: Vec<output::Module> = module_index
+        .to_vec()
+        .into_iter()
+        .map(|module_info| output::Module {
+            name: module_info.name,
+            build_id: module_info.build_id,
+        })
+        .collect();
     let profile = output::Profile {
         modules: module_list,
         threads: threads,
+        frames: Some(frames_index.to_vec()),
+        resolved_frames: None,
     };
 
     let filename = format!("{}.vignette", process::id());

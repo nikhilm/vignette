@@ -17,7 +17,7 @@ use std::process;
 use std::slice;
 
 // we need to retrieve module name, GUID (build ID) and relative addr of IP.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModuleInfo {
     pub name: String,
     pub build_id: String,
