@@ -8,13 +8,9 @@ use self::goblin::elf::Elf;
 use self::memmap::MmapOptions;
 use std::ffi::CStr;
 use std::fs::File;
-use std::io::Read;
-use std::io::Result;
 use std::mem;
 use std::ops::Range;
 use std::path::Path;
-use std::process;
-use std::slice;
 
 // we need to retrieve module name, GUID (build ID) and relative addr of IP.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -87,7 +83,7 @@ impl ModuleCache {
         let elf = Elf::parse(&mapped).expect("valid elf");
         // aaaaa! go back to possibly parsing file section by section and doing the string table
         // lookup ourselves.
-        let mut notes = elf.iter_note_headers(&mapped).unwrap();
+        let notes = elf.iter_note_headers(&mapped).unwrap();
         let mut build_id_opt = None;
         for note_r in notes {
             let note = note_r.unwrap();
@@ -116,7 +112,7 @@ impl ModuleCache {
         // Return it in both cases.
         let name = path.file_name().expect("file name").to_str().expect("utf8");
         {
-            let mut existing = self.module_ranges.iter_mut().find(|module| {
+            let existing = self.module_ranges.iter_mut().find(|module| {
                 module.info.name == name
                     && module.info.build_id == build_id
                     && module.range.start == base
@@ -124,7 +120,7 @@ impl ModuleCache {
 
             if let Some(module) = existing {
                 assert!(addr as usize >= module.range.start);
-                module.range = (module.range.start..((addr as usize) + 1).max(module.range.end));
+                module.range = module.range.start..((addr as usize) + 1).max(module.range.end);
                 let rva = Self::relative_addr(&module, addr);
                 return Some((module.info.clone(), rva));
             }

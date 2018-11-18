@@ -9,19 +9,18 @@ use self::{
 use std::{cell::UnsafeCell, fs, io, mem, process};
 
 // not-so-opaque wrapper around pid_t
-#[derive(Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ThreadId(pub libc::pid_t);
+pub type ThreadId = libc::pid_t;
 
 fn gettid() -> libc::pid_t {
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }
 
 pub fn get_current_thread() -> ThreadId {
-    ThreadId(gettid())
+    gettid()
 }
 
 pub fn is_current_thread(id: &ThreadId) -> bool {
-    gettid() == id.0
+    gettid() == *id
 }
 
 /// wraps a POSIX semaphore
@@ -106,7 +105,7 @@ pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<ThreadId>
         r.map(|entry| {
             entry.map(|dir_entry| {
                 let file = dir_entry.file_name().into_string().expect("valid utf8");
-                ThreadId(file.parse::<libc::pid_t>().expect("tid should be pid_t"))
+                file.parse::<libc::pid_t>().expect("tid should be pid_t")
             })
         })
     })
@@ -176,18 +175,17 @@ impl Sampler {
     /// 2. Callback must not perform any heap allocations, nor must it interact with any other
     ///    shared locks that sampled threads can access.
     /// 3. Callback should return as quickly as possible to keep the program performant.
-    pub fn suspend_and_resume_thread<F, T>(&self, thread: &ThreadId, callback: F) -> T
+    pub fn suspend_and_resume_thread<F, T>(&self, thread: ThreadId, callback: F) -> T
     where
         F: FnOnce(&mut libc::ucontext_t) -> T,
     {
-        let tid = thread.0;
-        assert!(gettid() != tid, "Can't suspend sampler itself!");
+        debug_assert!(!is_current_thread(&thread), "Can't suspend sampler itself!");
 
         // first we reinitialize the semaphores
         reset_shared_state();
 
         // signal the thread, wait for it to tell us state was copied.
-        send_sigprof(tid);
+        send_sigprof(thread);
         unsafe {
             SHARED_STATE
                 .msg2
@@ -286,6 +284,8 @@ pub struct Sample {
     frames: Vec<Frame>,
 }
 
+// TODO: We probably don't want the actual collection to happen in a publicly exposed struct that
+// is meant for representation.
 impl Sample {
     /// Creates a new Sample.
     ///

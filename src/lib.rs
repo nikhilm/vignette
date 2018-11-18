@@ -1,5 +1,7 @@
 #![feature(range_contains)]
 
+use std::collections::HashMap;
+
 #[macro_use]
 extern crate serde_derive;
 
@@ -8,11 +10,65 @@ mod lib_linux;
 #[cfg(target_os = "linux")]
 pub use lib_linux::*;
 
-// next step is to add IP grabbing using libunwind-sys.
-
-pub mod module_cache;
 pub mod output;
 pub mod speedscope;
+
+mod module_cache;
+
+pub struct Profiler {
+    sampler: Sampler,
+    threads: HashMap<ThreadId, Vec<Vec<Frame>>>,
+    // TODO: If we want to support programs that load and unload shared libraries, we will want to
+    // capture the state of all modules at the time of profile capture. Then we'd have to have a
+    // module cache here, and propagate it to the profile.
+}
+
+impl Profiler {
+    pub fn new() -> Profiler {
+        Profiler {
+            // TODO: Once we have a start/stop based interface, move this construction to there,
+            // since this overrides the signal handler for the process and is only needed later. We
+            // probably want some session kind of concept.
+            sampler: Sampler::new(),
+            threads: HashMap::new(),
+        }
+    }
+
+    /// Samples one thread once.
+    /// Panics if the thread is the sampling thread.
+    pub fn sample_thread(&mut self, thread: ThreadId) {
+        let sample = self.sample_once(thread);
+        self.threads.entry(thread).or_insert_with(|| Vec::new()).push(sample);
+    }
+
+    fn sample_once(&self, thread: ThreadId) -> Vec<Frame> {
+        // TODO: Want to make the sample sizes configurable.
+        let sample = Sample::new(20);
+        // TODO: Need to think if this interface is the best.
+        self.sampler.suspend_and_resume_thread(thread, move |context| {
+            // TODO: For perf we probably actually want to allow re-use of the sample storage,
+            // instead of allocating new frames above every time.
+            // i.e. once a sample has been captured and turned into some other representation, we
+            // could re-use the vector.
+            sample.collect(context).expect("sample succeeded")
+        })
+    }
+
+    pub fn finish(self) -> Profile {
+        Profile {
+            threads: self.threads,
+        }
+    }
+}
+
+/// In-memory profile. This is just an opaque container for now.
+/// Use the Outputter to obtain a serializable form with build IDs resolved.
+pub struct Profile {
+    threads: HashMap<ThreadId, Vec<Vec<Frame>>>,
+}
+
+// TODO: Can we also have an iterator interface where each iteration causes a sampling? That way it
+// would be lazy.
 
 #[cfg(test)]
 mod tests {
