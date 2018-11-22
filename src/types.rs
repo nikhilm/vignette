@@ -14,5 +14,5 @@ pub trait Unwinder<T> {
     /// Unwind a stack from a context.
     ///
     /// Returns the collected frames.
-    fn unwind(mut self, context: T) -> Result<Sample, i32>;
+    fn unwind(self, context: T) -> Result<Sample, i32>;
 }
