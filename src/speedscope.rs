@@ -6,6 +6,13 @@ use std::io;
 use std::io::Write;
 
 /*
+ * The below comment and struct definitons were copied from the speedscope sources in rbspy.
+ * https://github.com/rbspy/rbspy/blob/d408b12dfc906292e1e85e6152a38416ed3a18e5/src/ui/speedscope.rs
+ *
+ * There are slight modifications to the SpeedscopeFile impl to support vignette.
+ */
+
+/*
  * This file contains code to export rbspy profiles for use in https://speedscope.app
  *
  * The TypeScript definitions that define this file format can be found here:
