@@ -8,6 +8,8 @@ use self::{
 };
 use std::{cell::UnsafeCell, fs, io, mem, process};
 
+use types::{Frame, Sample, Unwinder};
+
 // not-so-opaque wrapper around pid_t
 pub type ThreadId = libc::pid_t;
 
@@ -265,29 +267,18 @@ fn send_sigprof(to: libc::pid_t) {
     }
 }
 
-/// This definition will evolve as we go along.
-#[derive(Debug, Hash)]
-pub struct Frame {
-    #[cfg(target_pointer_width = "32")]
-    pub ip: u32,
-    #[cfg(target_pointer_width = "64")]
-    pub ip: u64,
-}
-
-/// Support for collecting one sample.
+/// An Unwinder walks one stack and collects frames.
 ///
-/// A sample should be created, then passed the context to unwind and finally one can retrieve the
+/// An unwinder should be created, then passed the context to unwind and finally one can retrieve the
 /// frames.
 ///
 /// Creation should be done outside the suspend_and_resume_thread call!
-pub struct Sample {
-    frames: Vec<Frame>,
+pub struct LibunwindUnwinder {
+    frames: Sample,
 }
 
-// TODO: We probably don't want the actual collection to happen in a publicly exposed struct that
-// is meant for representation.
-impl Sample {
-    /// Creates a new Sample.
+impl LibunwindUnwinder {
+    /// Creates a new Unwinder.
     ///
     /// This sample will hold upto max_frames frames.
     /// The collection begins from the bottom-most function on the stack, so once the limit is
@@ -295,15 +286,14 @@ impl Sample {
     ///
     /// This is NOT safe to use within suspend_and_resume_thread.
     pub fn new(max_frames: usize) -> Self {
-        Sample {
+        Self {
             frames: Vec::with_capacity(max_frames),
         }
     }
+}
 
+impl Unwinder<&mut libc::ucontext_t> for LibunwindUnwinder {
     // TODO: Use failure for better errors + wrap unwind errors.
-    /// Unwind a stack from a context.
-    ///
-    /// Returns the collected frames.
     /// The length of the vector is the actual collected frames (<= max_frames).
     ///
     /// This IS safe to use within suspend_and_resume_thread.
@@ -311,7 +301,7 @@ impl Sample {
     /// TODO: Right now if stepping fails, this whole function fails, but we may want to return the
     /// frames we have. We also probably want another state to indicate we had more frames than
     /// capacity, so users can report some kind of stats.
-    pub fn collect(mut self, context: &mut libc::ucontext_t) -> Result<Vec<Frame>, i32> {
+    fn unwind(mut self, context: &mut libc::ucontext_t) -> Result<Sample, i32> {
         // This is a stack allocation, so it is OK.
         let mut cursor: unw_cursor_t = unsafe { mem::uninitialized() };
 

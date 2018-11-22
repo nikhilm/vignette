@@ -13,7 +13,10 @@ pub use lib_linux::*;
 pub mod output;
 pub mod speedscope;
 
+pub mod types;
 mod module_cache;
+
+use types::{Frame, Sample, Unwinder};
 
 pub struct Profiler {
     sampler: Sampler,
@@ -43,14 +46,14 @@ impl Profiler {
 
     fn sample_once(&self, thread: ThreadId) -> Vec<Frame> {
         // TODO: Want to make the sample sizes configurable.
-        let sample = Sample::new(20);
+        let unwinder = LibunwindUnwinder::new(20);
         // TODO: Need to think if this interface is the best.
         self.sampler.suspend_and_resume_thread(thread, move |context| {
             // TODO: For perf we probably actually want to allow re-use of the sample storage,
             // instead of allocating new frames above every time.
             // i.e. once a sample has been captured and turned into some other representation, we
             // could re-use the vector.
-            sample.collect(context).expect("sample succeeded")
+            unwinder.unwind(context).expect("sample succeeded")
         })
     }
 
