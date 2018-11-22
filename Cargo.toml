@@ -19,12 +19,3 @@ libc = "~0.2.42"
 unwind-sys = "0.1.1"
 goblin = "0.0.17"
 hex = "0.3.2"
-
-[[example]]
-name = "suspend_resume"
-
-[[example]]
-name = "sample_once"
-
-[[example]]
-name = "resolve_symbols"
