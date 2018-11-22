@@ -17,13 +17,6 @@ pub struct Frame {
     pub relative_ip: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
-pub struct ResolvedFrame {
-    pub name: String,
-    pub file: String,
-    pub line: u32,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Sample {
     /// Index into a Vec<Frame>.
@@ -57,8 +50,21 @@ impl From<ModuleInfo> for Module {
 pub struct Profile {
     pub modules: Vec<Module>,
     pub threads: Vec<Thread>,
-    pub frames: Option<Vec<Frame>>,
-    pub resolved_frames: Option<Vec<ResolvedFrame>>,
+    pub frames: Vec<Frame>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
+pub struct ResolvedFrame {
+    pub name: String,
+    pub file: String,
+    pub line: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResolvedProfile {
+    pub modules: Vec<Module>,
+    pub threads: Vec<Thread>,
+    pub frames: Vec<ResolvedFrame>,
 }
 
 // TODO: VecHashMap shouldn't be in output.
@@ -181,9 +187,7 @@ impl Outputter {
                 .into_iter()
                 .map(Module::from)
                 .collect(),
-            frames: Some(self.frames_index.vec()),
-            // TODO: Should be different type!
-            resolved_frames: None,
+            frames: self.frames_index.vec(),
         }
     }
 }

@@ -12,9 +12,10 @@ fn main() {
         .read(true)
         .open(resolved_profile_path)
         .expect("file");
-    let resolved_profile: output::Profile = serde_json::from_reader(file).unwrap();
+    let resolved_profile: output::ResolvedProfile = serde_json::from_reader(file).unwrap();
 
-    let speed_frames: Vec<speedscope::Frame> = (&resolved_profile.resolved_frames.unwrap())
+    let speed_frames: Vec<speedscope::Frame> = resolved_profile
+        .frames
         .iter()
         .map(|frame| speedscope::Frame {
             name: frame.name.clone(),
@@ -36,7 +37,7 @@ fn main() {
                     sample.frames
                 })
                 .collect();
-            (Some(thread.thread_id.0 as usize), samples)
+            (Some(thread.thread_id as usize), samples)
         })
         .collect();
 

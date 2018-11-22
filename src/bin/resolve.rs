@@ -11,7 +11,7 @@ use std::io::Read;
 use std::io::Write;
 use symbolic_common::byteview::ByteView;
 use symbolic_common::types::ObjectKind;
-use symbolic_debuginfo::{BreakpadData, BreakpadRecord, FatObject};
+use symbolic_debuginfo::FatObject;
 use symbolic_symcache::SymCache;
 use vignette::output;
 
@@ -115,18 +115,15 @@ fn main() {
 
     let resolved_frames: Vec<output::ResolvedFrame> = unresolved_profile
         .frames
-        .as_ref()
-        .expect("frames")
         .iter()
         .map(|f| resolve_frame(f, &unresolved_profile.modules, &mut symcache))
         .collect();
 
     // Translate frames to resolved frames, looking up modules as required.
-    let resolved_profile = output::Profile {
+    let resolved_profile = output::ResolvedProfile {
         modules: unresolved_profile.modules,
         threads: unresolved_profile.threads,
-        frames: None,
-        resolved_frames: Some(resolved_frames),
+        frames: resolved_frames,
     };
     let stdout = std::io::stdout();
     serde_json::to_writer_pretty(stdout.lock(), &resolved_profile).expect("wrote resolved profile");
