@@ -46,7 +46,7 @@ impl Profiler {
 
     fn sample_once(&self, thread: ThreadId) -> Vec<Frame> {
         // TODO: Want to make the sample sizes configurable.
-        let unwinder = LibunwindUnwinder::new(20);
+        let mut unwinder = LibunwindUnwinder::new(150);
         // TODO: Need to think if this interface is the best.
         self.sampler.suspend_and_resume_thread(thread, move |context| {
             // TODO: For perf we probably actually want to allow re-use of the sample storage,
