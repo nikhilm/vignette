@@ -22,7 +22,6 @@ use types::{Frame, Sample, Unwinder};
 
 pub struct Profiler {
     sampler: Sampler,
-    threads: HashMap<ThreadId, Vec<Vec<Frame>>>,
     // TODO: If we want to support programs that load and unload shared libraries, we will want to
     // capture the state of all modules at the time of profile capture. Then we'd have to have a
     // module cache here, and propagate it to the profile.
@@ -35,10 +34,23 @@ impl Profiler {
             // since this overrides the signal handler for the process and is only needed later. We
             // probably want some session kind of concept.
             sampler: Sampler::new(),
-            threads: HashMap::new(),
         }
     }
 
+    pub fn session(&self) -> Session {
+        Session {
+            profiler: &self,
+            threads: HashMap::new(),
+        }
+    }
+}
+
+pub struct Session<'a> {
+    profiler: &'a Profiler,
+    threads: HashMap<ThreadId, Vec<Vec<Frame>>>,
+}
+
+impl<'a> Session<'a> {
     /// Samples one thread once.
     /// Panics if the thread is the sampling thread.
     pub fn sample_thread(&mut self, thread: ThreadId) {
@@ -50,7 +62,7 @@ impl Profiler {
         // TODO: Want to make the sample sizes configurable.
         let mut unwinder = LibunwindUnwinder::new(150);
         // TODO: Need to think if this interface is the best.
-        self.sampler.suspend_and_resume_thread(thread, move |context| {
+        self.profiler.sampler.suspend_and_resume_thread(thread, move |context| {
             // TODO: For perf we probably actually want to allow re-use of the sample storage,
             // instead of allocating new frames above every time.
             // i.e. once a sample has been captured and turned into some other representation, we

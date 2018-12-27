@@ -58,7 +58,8 @@ fn main() {
     // Let both threads start.
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    let mut profiler = Profiler::new();
+    let profiler = Profiler::new();
+    let mut session = profiler.session();
 
     for _ in 0..20 {
         let threads = thread_iterator().expect("threads");
@@ -67,7 +68,7 @@ fn main() {
             if thread.is_current_thread() {
                 continue;
             }
-            profiler.sample_thread(thread);
+            session.sample_thread(thread);
         }
     }
 
@@ -83,7 +84,7 @@ fn main() {
     println!("Done sampling");
 
     let mut outputter = Outputter::new();
-    let output_profile = outputter.output(profiler.finish());
+    let output_profile = outputter.output(session.finish());
     let filename = format!("{}.vignette", process::id());
     let file = File::create(&filename).unwrap();
     serde_json::to_writer_pretty(file, &output_profile).unwrap();
