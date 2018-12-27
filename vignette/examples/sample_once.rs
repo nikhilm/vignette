@@ -1,4 +1,5 @@
 extern crate libc;
+extern crate threadinfo;
 extern crate vignette;
 
 extern crate serde;
@@ -15,7 +16,8 @@ use vignette::output::Outputter;
 // TODO: Everything except profiler really should not be public and we instead want to register
 // threads with the profiler? The thread iteration stuff is useful in general though and could be a
 // separate crate/module.
-use vignette::{get_current_thread, is_current_thread, thread_iterator, Profiler};
+use threadinfo::{current_thread, thread_iterator};
+use vignette::Profiler;
 
 fn fun_one(running2: Arc<RwLock<bool>>) {
     while *(running2.read().unwrap()) {
@@ -24,14 +26,14 @@ fn fun_one(running2: Arc<RwLock<bool>>) {
             _sum += i;
         }
     }
-    println!("fun thread {:?}", get_current_thread());
+    println!("fun thread {:?}", current_thread().unwrap());
 }
 
 fn boring_one(running2: Arc<RwLock<bool>>) {
     while *(running2.read().unwrap()) {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    println!("boring thread {:?}", get_current_thread());
+    println!("boring thread {:?}", current_thread().unwrap());
 }
 
 fn main() {
@@ -60,10 +62,9 @@ fn main() {
 
     for _ in 0..20 {
         let threads = thread_iterator().expect("threads");
-        for res in threads {
-            let thread = res.expect("thread");
+        for thread in threads {
             // TODO: Kinda weird to leak this current thread detail out here.
-            if is_current_thread(&thread) {
+            if thread.is_current_thread() {
                 continue;
             }
             profiler.sample_thread(thread);

@@ -1,9 +1,8 @@
 #![feature(range_contains)]
 
-use std::collections::HashMap;
-
 #[macro_use]
 extern crate serde_derive;
+extern crate threadinfo;
 
 #[cfg(target_os = "linux")]
 mod lib_linux;
@@ -16,6 +15,9 @@ pub mod speedscope;
 pub mod types;
 mod module_cache;
 
+use std::collections::HashMap;
+
+use threadinfo::Thread as ThreadId;
 use types::{Frame, Sample, Unwinder};
 
 pub struct Profiler {

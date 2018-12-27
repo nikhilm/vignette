@@ -1,3 +1,4 @@
+extern crate threadinfo;
 extern crate vignette;
 
 use std::{
@@ -6,7 +7,8 @@ use std::{
     thread::spawn,
 };
 
-use vignette::{is_current_thread, thread_iterator, Sampler};
+use threadinfo::{current_thread, thread_iterator};
+use vignette::Sampler;
 
 fn main() {
     // Spawn a bunch of threads, then sample them.
@@ -26,9 +28,8 @@ fn main() {
     let counter = RefCell::new(0);
 
     let threads = thread_iterator().expect("threads");
-    for (i, res) in threads.enumerate() {
-        let thread = res.expect("thread");
-        if is_current_thread(&thread) {
+    for (i, thread) in threads.enumerate() {
+        if thread.is_current_thread() {
             continue;
         }
 

@@ -1,29 +1,16 @@
 extern crate libc;
 extern crate nix;
+extern crate threadinfo;
 extern crate unwind_sys;
 
 use self::{
     nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal},
+    threadinfo::Thread,
     unwind_sys::*,
 };
 use std::{cell::UnsafeCell, fs, io, mem, process};
 
 use types::{Frame, Sample, Unwinder};
-
-// not-so-opaque wrapper around pid_t
-pub type ThreadId = libc::pid_t;
-
-fn gettid() -> libc::pid_t {
-    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
-}
-
-pub fn get_current_thread() -> ThreadId {
-    gettid()
-}
-
-pub fn is_current_thread(id: &ThreadId) -> bool {
-    gettid() == *id
-}
 
 /// wraps a POSIX semaphore
 ///
@@ -99,20 +86,6 @@ impl Drop for PosixSemaphore {
 // 1. use the breakpad-symbols crate + dump_syms.
 // 2. use goblin over the unstripped binaries.
 
-/// Iterates over task threads by reading /proc.
-///
-/// IMPORTANT: This iterator also returns the sampling thread!
-pub fn thread_iterator() -> io::Result<impl Iterator<Item = io::Result<ThreadId>>> {
-    fs::read_dir("/proc/self/task").map(|r| {
-        r.map(|entry| {
-            entry.map(|dir_entry| {
-                let file = dir_entry.file_name().into_string().expect("valid utf8");
-                file.parse::<libc::pid_t>().expect("tid should be pid_t")
-            })
-        })
-    })
-}
-
 struct SharedState {
     // "msg1" is the signal.
     msg2: Option<PosixSemaphore>,
@@ -177,17 +150,17 @@ impl Sampler {
     /// 2. Callback must not perform any heap allocations, nor must it interact with any other
     ///    shared locks that sampled threads can access.
     /// 3. Callback should return as quickly as possible to keep the program performant.
-    pub fn suspend_and_resume_thread<F, T>(&self, thread: ThreadId, callback: F) -> T
+    pub fn suspend_and_resume_thread<F, T>(&self, thread: Thread, callback: F) -> T
     where
         F: FnOnce(&mut libc::ucontext_t) -> T,
     {
-        debug_assert!(!is_current_thread(&thread), "Can't suspend sampler itself!");
+        debug_assert!(!thread.is_current_thread(), "Can't suspend sampler itself!");
 
         // first we reinitialize the semaphores
         reset_shared_state();
 
         // signal the thread, wait for it to tell us state was copied.
-        send_sigprof(thread);
+        thread.send_signal(libc::SIGPROF);
         unsafe {
             SHARED_STATE
                 .msg2
@@ -257,13 +230,6 @@ extern "C" fn sigprof_handler(
         // OK we are done!
         SHARED_STATE.msg4.as_ref().unwrap().post().expect("posted");
         // DO NOT TOUCH shared state here onwards.
-    }
-}
-
-/// `to` is a Linux task ID.
-fn send_sigprof(to: libc::pid_t) {
-    unsafe {
-        libc::syscall(libc::SYS_tgkill, process::id(), to, libc::SIGPROF);
     }
 }
 
@@ -393,7 +359,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        send_sigprof(to);
+        to.send_signal(libc::SIGPROF);
         tx2.send(()).unwrap();
         handle.join().expect("successful join");
         unsafe {

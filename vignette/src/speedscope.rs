@@ -5,6 +5,8 @@ use std::fs::File;
 use std::io;
 use std::io::Write;
 
+use super::threadinfo::Thread;
+
 /*
  * The below comment and struct definitons were copied from the speedscope sources in rbspy.
  * https://github.com/rbspy/rbspy/blob/d408b12dfc906292e1e85e6152a38416ed3a18e5/src/ui/speedscope.rs
@@ -102,7 +104,7 @@ enum ValueUnit {
 
 impl SpeedscopeFile {
     pub fn new(
-        samples: HashMap<Option<usize>, Vec<Vec<usize>>>,
+        samples: HashMap<Option<Thread>, Vec<Vec<usize>>>,
         frames: Vec<Frame>,
     ) -> SpeedscopeFile {
         let end_value = samples.len().clone();
@@ -126,7 +128,7 @@ impl SpeedscopeFile {
                         profile_type: ProfileType::Sampled,
 
                         name: option_pid.map_or("vignette profile".to_string(), |pid| {
-                            format!("vignette profile - pid {}", pid)
+                            format!("vignette profile {:?}", pid)
                         }),
 
                         unit: ValueUnit::None,

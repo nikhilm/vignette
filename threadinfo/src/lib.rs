@@ -6,6 +6,9 @@
 /// provide, uses OS APIs that rely on those details. It uses the Windows Threads API, Mach and
 /// Linux tasks.
 
+#[macro_use]
+extern crate serde_derive;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "linux")]

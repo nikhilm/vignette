@@ -25,7 +25,7 @@ fn main() {
         })
         .collect();
 
-    let speed_samples: HashMap<Option<usize>, Vec<Vec<usize>>> = resolved_profile
+    let speed_samples: HashMap<Option<_>, Vec<Vec<usize>>> = resolved_profile
         .threads
         .into_iter()
         .map(|thread| {
@@ -37,7 +37,7 @@ fn main() {
                     sample.frames
                 })
                 .collect();
-            (Some(thread.thread_id as usize), samples)
+            (Some(thread.thread_id), samples)
         })
         .collect();
 

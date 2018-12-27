@@ -4,12 +4,18 @@ use libc::{pid_t, syscall, SYS_gettid};
 use std::io::Result;
 use std::iter::Iterator;
 
-#[derive(Eq, PartialEq, Debug, Hash)]
+#[derive(Eq, PartialEq, Debug, Hash, Copy, Clone, Serialize, Deserialize)]
 pub struct Thread(pid_t);
 
 impl Thread {
     pub fn is_current_thread(&self) -> bool {
         self == &current_thread().expect("current thread should never fail")
+    }
+
+    pub fn send_signal(&self, signal: i32) {
+        unsafe {
+            libc::syscall(libc::SYS_tgkill, std::process::id(), self.0, signal);
+        }
     }
 }
 

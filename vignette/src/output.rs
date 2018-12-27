@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use ThreadId;
-
 use super::module_cache::{ModuleCache, ModuleInfo};
+use super::threadinfo::Thread as ThreadId;
 use super::Frame as InputFrame;
 use super::Profile as InputProfile;
 
