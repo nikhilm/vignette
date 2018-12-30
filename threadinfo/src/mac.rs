@@ -1,5 +1,10 @@
 extern crate mach;
 
+use std::{
+    io::{Error, ErrorKind, Result},
+    iter::Iterator,
+};
+
 use mach::{
     kern_return::KERN_SUCCESS,
     mach_init::mach_thread_self,
@@ -8,17 +13,35 @@ use mach::{
     task::task_threads,
     traps::mach_task_self,
 };
-use std::{
-    io::{Error, ErrorKind, Result},
-    iter::Iterator,
-};
+use mach::thread_act::thread_suspend;
+use mach::thread_act::thread_resume;
 
+// TODO: Better way than exposing private member?
+// Needed so vignette can retrieve the context
 #[derive(Eq, PartialEq, Debug, Hash, Copy, Clone, Serialize, Deserialize)]
-pub struct Thread(thread_act_t);
+pub struct Thread(pub thread_act_t);
 
 impl Thread {
     pub fn is_current_thread(&self) -> bool {
         self == &current_thread().expect("current thread should never fail")
+    }
+
+    pub fn suspend(&self) -> Result<()> {
+        let r = unsafe { thread_suspend(self.0)};
+        if r == KERN_SUCCESS {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::Other, format!("Could not suspend ({})", r)))
+        }
+    }
+
+    pub fn resume(&self) -> Result<()> {
+        let r = unsafe { thread_resume(self.0)};
+        if r == KERN_SUCCESS {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::Other, format!("Could not resume ({})", r)))
+        }
     }
 }
 

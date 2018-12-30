@@ -35,7 +35,7 @@ fn main() {
 
         sampler.suspend_and_resume_thread(thread, |context| {
             *counter.borrow_mut() += 1;
-            println!("Thread {} SP = {:p}", i, context.uc_stack.ss_sp);
+            // println!("Thread {} SP = {:p}", i, context.uc_stack.ss_sp);
         });
     }
 

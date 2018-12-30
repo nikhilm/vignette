@@ -9,6 +9,11 @@ mod lib_linux;
 #[cfg(target_os = "linux")]
 pub use lib_linux::*;
 
+#[cfg(target_os = "macos")]
+mod lib_mac;
+#[cfg(target_os = "macos")]
+pub use lib_mac::*;
+
 pub mod output;
 pub mod speedscope;
 
@@ -89,7 +94,6 @@ pub struct Profile {
 
 #[cfg(test)]
 mod tests {
-    extern crate libc;
     use super::*;
     use std::{sync::mpsc::channel, thread::spawn};
 

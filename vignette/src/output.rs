@@ -132,7 +132,7 @@ impl Outputter {
     fn output_frame(&mut self, frame: InputFrame) -> Option<Frame> {
         match self
             .module_cache
-            .get_or_insert(frame.ip as *const libc::c_void)
+            .get_or_insert(frame.ip)
         {
             Some((module, rva)) => {
                 let module_pos = self.module_index.get_or_insert(module.clone());
