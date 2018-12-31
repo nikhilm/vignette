@@ -132,7 +132,7 @@ impl Outputter {
     fn output_frame(&mut self, frame: InputFrame) -> Option<Frame> {
         match self
             .module_cache
-            .get_or_insert(frame.ip)
+            .get_or_insert(frame.ip as usize)
         {
             Some((module, rva)) => {
                 let module_pos = self.module_index.get_or_insert(module.clone());
