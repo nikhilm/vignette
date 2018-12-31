@@ -47,15 +47,15 @@ impl Sampler {
         debug_assert!(!thread.is_current_thread(), "Can't suspend sampler itself!");
 
         thread.suspend().unwrap();
-        let mut count: mach_msg_type_number_t = 0;
+        let mut count: mach_msg_type_number_t = x86_thread_state64_t::count();
         let mut thread_state: x86_thread_state64_t = unsafe { std::mem::uninitialized() };
-        let mut thread_state_ptr: thread_state_t = unsafe { std::mem::transmute(&thread_state) };
+        let mut thread_state_ptr: thread_state_t = &mut thread_state as *mut _ as thread_state_t;
         let r =
             unsafe { thread_get_state(thread.0, x86_THREAD_STATE64, thread_state_ptr, &mut count) };
-        assert!(r == KERN_SUCCESS);
-        assert_eq!(
-            std::mem::size_of::<unw::unw_context_t>(),
-            std::mem::size_of::<x86_thread_state64_t>()
+        assert!(r == KERN_SUCCESS, format!("{}", r));
+        assert!(
+            std::mem::size_of::<unw::unw_context_t>()
+                >= std::mem::size_of::<x86_thread_state64_t>()
         );
         let mut context: unw::unw_context_t = unsafe { std::mem::zeroed() };
         unsafe {
