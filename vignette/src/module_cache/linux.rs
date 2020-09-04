@@ -146,7 +146,7 @@ mod tests {
     use super::ModuleCache;
     use std::env;
     use std::ffi::CString;
-    use std::process;
+    
 
     #[test]
     fn test_cache() {
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_rva() {
-        let cache = ModuleCache::new();
+        let _cache = ModuleCache::new();
     }
 
     #[test]

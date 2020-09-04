@@ -2,30 +2,36 @@
 name = "vignette"
 version = "0.1.0"
 authors = ["Nikhil Marathe <nsm.nikhil@gmail.com>"]
+
+description = "A sampling profiler as a library. Particularly oriented towards shipping software where symbols need to be hydrated later."
 license = "MIT OR Apache-2.0"
+homepage = "https://github.com/nikhilm/vignette/tree/master/vignette"
+repository = "https://github.com/nikhilm/vignette"
+keywords = ["profiler", "sampling", "profiling", "symbols", "performance"]
+categories = ["development-tools"]
 
 [dependencies]
-serde = "1.0.69"
-serde_derive = "1.0.69"
-serde_json = "1.0.26"
-symbolic-debuginfo = "5.5.6"
-symbolic-common = "5.5.6"
-symbolic-symcache = "5.5.6"
-memmap = "0.6.2"
-threadinfo = { path = "../threadinfo" }
-rustc-demangle = "0.1.11"
+serde = "^1.0.69"
+serde_derive = "^1.0.69"
+serde_json = "^1.0.26"
+symbolic-debuginfo = "^5.5.6"
+symbolic-common = "^5.5.6"
+symbolic-symcache = "^5.5.6"
+memmap = "^0.6.2"
+threadinfo = { path = "../threadinfo", version = "0.1.0" }
+rustc-demangle = "^0.1.11"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-goblin = "0.0.17"
-hex = "0.3.2"
+goblin = "^0.0.17"
+hex = "^0.3.2"
 libc = "~0.2.42"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = "~0.11.0"
-unwind-sys = "0.1.1"
+unwind-sys = "^0.1.1"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.42.2"
+bindgen = "^0.42.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-mach = "0.2.3"
+mach = "^0.2.3"

@@ -1,8 +1,7 @@
-extern crate bindgen;
+#[cfg(target_os = "macos")]
+use std::{env, path::PathBuf};
 
-use std::env;
-use std::path::PathBuf;
-
+#[cfg(target_os = "macos")]
 fn main() {
     println!("cargo:rerun-if-changed=macos/unwind_wrapper.h");
 
@@ -25,3 +24,5 @@ fn main() {
         .expect("Couldn't write bindings!");
 }
 
+#[cfg(not(target_os = "macos"))]
+fn main() {}

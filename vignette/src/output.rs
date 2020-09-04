@@ -1,10 +1,10 @@
-use std::collections::HashMap;
-use std::hash::Hash;
+use std::{collections::HashMap, hash::Hash};
 
-use super::module_cache::{ModuleCache, ModuleInfo};
-use super::threadinfo::Thread as ThreadId;
-use super::Frame as InputFrame;
-use super::Profile as InputProfile;
+use super::{
+    module_cache::{ModuleCache, ModuleInfo},
+    threadinfo::Thread as ThreadId,
+    Frame as InputFrame, Profile as InputProfile,
+};
 
 // Intermediate vignette format to serialize instruction pointers and module caches without
 // symbols. This is then converted to a format other tools can support once symbols are available.
@@ -132,7 +132,7 @@ impl Outputter {
     fn output_frame(&mut self, frame: InputFrame) -> Option<Frame> {
         match self
             .module_cache
-            .get_or_insert(frame.ip as usize)
+            .get_or_insert(frame.ip as usize as *const libc::c_void)
         {
             Some((module, rva)) => {
                 let module_pos = self.module_index.get_or_insert(module.clone());

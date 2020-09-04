@@ -23,6 +23,7 @@ impl PosixSemaphore {
     /// Returns a new semaphore if initialization succeeded.
     ///
     /// TODO: Consider exposing error code.
+    #[allow(deprecated)]
     pub fn new(value: u32) -> io::Result<Self> {
         let mut sem: libc::sem_t = unsafe { mem::uninitialized() };
         let r = unsafe {
@@ -267,6 +268,7 @@ impl Unwinder<&mut libc::ucontext_t> for LibunwindUnwinder {
     /// TODO: Right now if stepping fails, this whole function fails, but we may want to return the
     /// frames we have. We also probably want another state to indicate we had more frames than
     /// capacity, so users can report some kind of stats.
+    #[allow(deprecated)]
     fn unwind(mut self, context: &mut libc::ucontext_t) -> Result<Sample, i32> {
         // This is a stack allocation, so it is OK.
         let mut cursor: unw_cursor_t = unsafe { mem::uninitialized() };
@@ -323,6 +325,7 @@ mod tests {
         sync::{mpsc::channel, Arc},
         thread::spawn,
     };
+    
 
     static mut SIGNAL_RECEIVED: bool = false;
 
@@ -353,7 +356,7 @@ mod tests {
         // Just to get the thread to wait until the signal is sent.
         let (tx2, rx2) = channel();
         let handle = spawn(move || {
-            let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+            let tid = threadinfo::current_thread().unwrap();
             tx.send(tid).unwrap();
             rx2.recv().unwrap();
         });
@@ -381,27 +384,18 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_iterator() {
-        let tasks: Vec<libc::pid_t> = thread_iterator()
-            .expect("threads")
-            .map(|x| x.expect("tid listed").0)
-            .collect();
-        assert!(tasks.contains(&gettid()));
-    }
-
-    #[test]
     fn test_suspend_resume() {
         let sampler = Sampler::new();
         let (tx, rx) = channel();
         // Just to get the thread to wait until the test is done.
         let (tx2, rx2) = channel();
         let handle = spawn(move || {
-            tx.send(ThreadId(gettid())).unwrap();
+            tx.send(threadinfo::current_thread().unwrap()).unwrap();
             rx2.recv().unwrap();
         });
 
         let to = rx.recv().unwrap();
-        sampler.suspend_and_resume_thread(&to, |context| {
+        sampler.suspend_and_resume_thread(to, |context| {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 
@@ -420,12 +414,13 @@ mod tests {
     #[should_panic]
     fn test_suspend_resume_itself() {
         let sampler = Sampler::new();
-        let to = get_current_thread();
-        sampler.suspend_and_resume_thread(&to, |_| {});
+        let to = threadinfo::current_thread().unwrap();
+        sampler.suspend_and_resume_thread(to, |_| {});
     }
 
     #[test]
     #[ignore] // Useful for playing around, but not required.
+    #[allow(deprecated)]
     fn test_suspend_resume_unwind() {
         let sampler = Sampler::new();
         let (tx, rx) = channel();
@@ -433,7 +428,7 @@ mod tests {
         let (tx2, rx2) = channel();
         let handle = spawn(move || {
             let baz = || {
-                tx.send(ThreadId(gettid())).unwrap();
+                tx.send(threadinfo::current_thread().unwrap()).unwrap();
                 rx2.recv().unwrap();
             };
             let bar = || {
@@ -448,7 +443,7 @@ mod tests {
         });
 
         let to = rx.recv().unwrap();
-        sampler.suspend_and_resume_thread(&to, |context| unsafe {
+        sampler.suspend_and_resume_thread(to, |context| unsafe {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 

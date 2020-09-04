@@ -4,7 +4,7 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Cursor;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 
 fn main() {
     let mut args = std::env::args();
@@ -20,7 +20,7 @@ fn main() {
         panic!("dump_syms failed");
     }
 
-    let mut reader = BufReader::new(Cursor::new(&output.stdout));
+    let reader = BufReader::new(Cursor::new(&output.stdout));
 
     let header: Vec<String> = reader
         .lines()

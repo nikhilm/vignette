@@ -1,5 +1,3 @@
-#![feature(range_contains)]
-
 #[macro_use]
 extern crate serde_derive;
 extern crate threadinfo;
@@ -17,13 +15,13 @@ pub use lib_mac::*;
 pub mod output;
 pub mod speedscope;
 
-pub mod types;
 mod module_cache;
+pub mod types;
 
 use std::collections::HashMap;
 
 use threadinfo::Thread as ThreadId;
-use types::{Frame, Sample, Unwinder};
+use types::{Frame, Unwinder};
 
 pub struct Profiler {
     sampler: Sampler,
@@ -60,20 +58,25 @@ impl<'a> Session<'a> {
     /// Panics if the thread is the sampling thread.
     pub fn sample_thread(&mut self, thread: ThreadId) {
         let sample = self.sample_once(thread);
-        self.threads.entry(thread).or_insert_with(|| Vec::new()).push(sample);
+        self.threads
+            .entry(thread)
+            .or_insert_with(|| Vec::new())
+            .push(sample);
     }
 
     fn sample_once(&self, thread: ThreadId) -> Vec<Frame> {
         // TODO: Want to make the sample sizes configurable.
-        let mut unwinder = LibunwindUnwinder::new(150);
+        let unwinder = LibunwindUnwinder::new(150);
         // TODO: Need to think if this interface is the best.
-        self.profiler.sampler.suspend_and_resume_thread(thread, move |context| {
-            // TODO: For perf we probably actually want to allow re-use of the sample storage,
-            // instead of allocating new frames above every time.
-            // i.e. once a sample has been captured and turned into some other representation, we
-            // could re-use the vector.
-            unwinder.unwind(context).expect("sample succeeded")
-        })
+        self.profiler
+            .sampler
+            .suspend_and_resume_thread(thread, move |context| {
+                // TODO: For perf we probably actually want to allow re-use of the sample storage,
+                // instead of allocating new frames above every time.
+                // i.e. once a sample has been captured and turned into some other representation, we
+                // could re-use the vector.
+                unwinder.unwind(context).expect("sample succeeded")
+            })
     }
 
     pub fn finish(self) -> Profile {
@@ -105,12 +108,12 @@ mod tests {
         // Just to get the thread to wait until the test is done.
         let (tx2, rx2) = channel();
         let handle = spawn(move || {
-            tx.send(get_current_thread()).unwrap();
+            tx.send(threadinfo::current_thread().unwrap()).unwrap();
             rx2.recv().unwrap();
         });
 
         let to = rx.recv().unwrap();
-        sampler.suspend_and_resume_thread(&to, |context| {
+        sampler.suspend_and_resume_thread(to, |context| {
             // TODO: This is where we would want to use libunwind in a real program.
             assert!(context.uc_stack.ss_size > 0);
 
@@ -120,5 +123,4 @@ mod tests {
 
         handle.join().unwrap();
     }
-
 }

@@ -7,7 +7,7 @@ use std::{
     thread::spawn,
 };
 
-use threadinfo::{current_thread, thread_iterator};
+use threadinfo::{thread_iterator};
 use vignette::Sampler;
 
 fn main() {
@@ -28,12 +28,12 @@ fn main() {
     let counter = RefCell::new(0);
 
     let threads = thread_iterator().expect("threads");
-    for (i, thread) in threads.enumerate() {
+    for (_i, thread) in threads.enumerate() {
         if thread.is_current_thread() {
             continue;
         }
 
-        sampler.suspend_and_resume_thread(thread, |context| {
+        sampler.suspend_and_resume_thread(thread, |_context| {
             *counter.borrow_mut() += 1;
             // println!("Thread {} SP = {:p}", i, context.uc_stack.ss_sp);
         });
